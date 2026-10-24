@@ -1,0 +1,106 @@
+# ============================================================
+# CRYPTO SCOUT AI — V1 CONFIGURATION
+# Independent cryptocurrency paper-trading project
+# ============================================================
+
+project:
+  name: "crypto-scout-ai"
+  version: "1.0.0"
+  mode: "PAPER"
+
+# -------------------- MARKET UNIVERSE -----------------------
+
+market:
+  universe_size: 200
+
+  # Exclude stablecoins from the trading universe.
+  stablecoin_exclusions:
+    - USDT
+    - USDC
+    - DAI
+    - FDUSD
+    - USDE
+    - TUSD
+    - USDS
+    - USDD
+    - PYUSD
+    - USD1
+    - FRAX
+    - GUSD
+    - LUSD
+
+  quote_currency: "USDT"
+  exchange: "binance"
+
+  # Generate swing-trading signals from 4-hour candles.
+  signal_timeframe: "4h"
+
+  # Monitor open positions using 5-minute market data.
+  monitor_timeframe: "5m"
+
+  # Minimum historical candles required for analysis.
+  # 220 four-hour candles provide enough data for SMA200.
+  signal_bars: 220
+
+  # Minimum average dollar volume per 4-hour candle.
+  # This is a preliminary liquidity threshold to validate.
+  min_avg_dollar_volume: 5000000
+
+# ---------------------- STRATEGY ----------------------------
+
+strategy:
+  type: "SWING"
+
+  atr_period: 14
+  stop_atr_multiple: 1.5
+  target_atr_multiple: 3.0
+
+  # Paper portfolio limits.
+  max_positions: 10
+  starting_cash: 100000.0
+
+# -------------------- TECHNICAL SCORING ---------------------
+
+scoring:
+  weights:
+    trend: 0.30
+    momentum: 0.25
+    rsi: 0.15
+    volume: 0.15
+    breakout: 0.15
+
+# -------------------- PAPER PORTFOLIO -----------------------
+
+portfolio:
+  max_positions: 10
+
+  # Maximum initial allocation as a fraction of available cash.
+  position_size_fraction: 0.10
+
+  # Do not replace existing open positions automatically.
+  replace_open_positions: false
+
+# ---------------------- DATA SOURCES ------------------------
+
+data:
+  coingecko_url: "https://api.coingecko.com/api/v3/coins/markets"
+
+  timeout_seconds: 20
+
+  # Historical OHLCV candles requested from the exchange.
+  ohlcv_limit: 250
+
+# ---------------------- MONITORING --------------------------
+
+monitor:
+  enabled: true
+  interval_minutes: 5
+  check_stop: true
+  check_target: true
+
+# ---------------------- SAFETY ------------------------------
+
+safety:
+  paper_trading_only: true
+  live_orders_enabled: false
+  leverage_enabled: false
