@@ -57,7 +57,7 @@ strategy:
 
   # Paper portfolio limits.
   max_positions: 10
-  starting_cash: 100000.0
+  starting_cash: 10000.0
 
 # -------------------- TECHNICAL SCORING ---------------------
 

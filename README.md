@@ -196,7 +196,7 @@ These values are research parameters and are not guarantees of performance.
 The initial virtual account is:
 
 ```text
-$100,000
+$10,000
 ```
 
 Maximum number of simultaneous positions:
