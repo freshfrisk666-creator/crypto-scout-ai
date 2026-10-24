@@ -1,4 +1,4 @@
-# Crypto Scout AI
+# Crypto Scout AI V1
 
 **Crypto Scout AI V1** is an independent research and paper-trading project designed to test a systematic trading strategy on the cryptocurrency market.
 
