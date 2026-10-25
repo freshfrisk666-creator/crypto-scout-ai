@@ -10,6 +10,7 @@ from agents.scanner import (
     load_config,
 )
 from database.db import init_db, insert_scan_results
+from portfolio.paper_trading import sync_from_top10
 from scoring.signal_engine import (
     build_short_term_signal,
     rank_signals,
@@ -54,16 +55,23 @@ def fetch_closed_ohlcv(
     timeframe_seconds = exchange.parse_timeframe(timeframe)
     now = pd.Timestamp.now(tz="UTC")
 
-    candle_close_time = df["timestamp"] + pd.to_timedelta(
-        timeframe_seconds,
-        unit="s",
+    candle_close_time = (
+        df["timestamp"]
+        + pd.to_timedelta(
+            timeframe_seconds,
+            unit="s",
+        )
     )
 
-    df = df.loc[candle_close_time <= now].copy()
+    df = df.loc[
+        candle_close_time <= now
+    ].copy()
 
     return (
         df.sort_values("timestamp")
-        .drop_duplicates(subset=["timestamp"])
+        .drop_duplicates(
+            subset=["timestamp"]
+        )
         .reset_index(drop=True)
     )
 
@@ -81,9 +89,11 @@ def to_finite_float(value) -> float | None:
     return result
 
 
-def get_market_stats(ticker_data: dict) -> dict | None:
+def get_market_stats(
+    ticker_data: dict,
+) -> dict | None:
     """
-    Read 24-hour quote volume and the bid/ask spread.
+    Read 24-hour quote volume and bid/ask spread.
 
     Assets with incomplete or invalid market data are rejected.
     """
@@ -97,11 +107,17 @@ def get_market_stats(ticker_data: dict) -> dict | None:
     )
 
     bid = to_finite_float(
-        ticker_data.get("bid", info.get("bidPrice"))
+        ticker_data.get(
+            "bid",
+            info.get("bidPrice"),
+        )
     )
 
     ask = to_finite_float(
-        ticker_data.get("ask", info.get("askPrice"))
+        ticker_data.get(
+            "ask",
+            info.get("askPrice"),
+        )
     )
 
     if (
@@ -114,12 +130,17 @@ def get_market_stats(ticker_data: dict) -> dict | None:
     ):
         return None
 
-    midpoint = (bid + ask) / 2.0
+    midpoint = (
+        bid + ask
+    ) / 2.0
 
     if midpoint <= 0:
         return None
 
-    spread_bps = ((ask - bid) / midpoint) * 10000.0
+    spread_bps = (
+        (ask - bid)
+        / midpoint
+    ) * 10000.0
 
     return {
         "quote_volume_24h_usdt": quote_volume,
@@ -127,12 +148,18 @@ def get_market_stats(ticker_data: dict) -> dict | None:
     }
 
 
-def fetch_ticker_snapshots(exchange, symbols: list[str]) -> dict:
+def fetch_ticker_snapshots(
+    exchange,
+    symbols: list[str],
+) -> dict:
     """Fetch tickers in bulk, with a fallback for individual symbols."""
     try:
         tickers = exchange.fetch_tickers()
 
-        if isinstance(tickers, dict) and tickers:
+        if (
+            isinstance(tickers, dict)
+            and tickers
+        ):
             return tickers
 
     except Exception as exc:
@@ -143,15 +170,23 @@ def fetch_ticker_snapshots(exchange, symbols: list[str]) -> dict:
 
     result = {}
 
-    for index, symbol in enumerate(symbols, start=1):
+    for index, symbol in enumerate(
+        symbols,
+        start=1,
+    ):
         try:
-            result[symbol] = exchange.fetch_ticker(symbol)
+            result[symbol] = (
+                exchange.fetch_ticker(symbol)
+            )
         except Exception as exc:
-            print(f"Ticker unavailable for {symbol}: {exc}")
+            print(
+                f"Ticker unavailable for {symbol}: "
+                f"{exc}"
+            )
 
         if index % 25 == 0:
             print(
-                f"Ticker fallback progress: "
+                "Ticker fallback progress: "
                 f"{index}/{len(symbols)}",
                 flush=True,
             )
@@ -165,73 +200,164 @@ def main() -> None:
     market = config["market"]
     strategy = config["strategy"]
     data_config = config["data"]
+    safety = config.get("safety", {})
+
+    # Hard safety guard:
+    # this runner is allowed to manage PAPER positions only.
+    if not bool(
+        safety.get(
+            "paper_trading_only",
+            True,
+        )
+    ):
+        raise RuntimeError(
+            "Safety check failed: "
+            "paper_trading_only must be true."
+        )
+
+    if bool(
+        safety.get(
+            "live_orders_enabled",
+            False,
+        )
+    ):
+        raise RuntimeError(
+            "Safety check failed: "
+            "live_orders_enabled must remain false."
+        )
+
+    if bool(
+        safety.get(
+            "leverage_enabled",
+            False,
+        )
+    ):
+        raise RuntimeError(
+            "Safety check failed: "
+            "leverage_enabled must remain false."
+        )
 
     init_db(
         starting_cash=float(
-            strategy.get("starting_cash", 10000.0)
+            strategy.get(
+                "starting_cash",
+                10000.0,
+            )
         )
     )
 
     exchange_name = str(
-        market.get("exchange", "binance")
+        market.get(
+            "exchange",
+            "binance",
+        )
     ).lower()
 
-    if not hasattr(ccxt, exchange_name):
+    if not hasattr(
+        ccxt,
+        exchange_name,
+    ):
         raise ValueError(
-            f"Unsupported CCXT exchange: {exchange_name}"
+            f"Unsupported CCXT exchange: "
+            f"{exchange_name}"
         )
 
-    exchange_class = getattr(ccxt, exchange_name)
+    exchange_class = getattr(
+        ccxt,
+        exchange_name,
+    )
 
     exchange = exchange_class(
         {
             "enableRateLimit": True,
-            "options": {"defaultType": "spot"},
+            "options": {
+                "defaultType": "spot",
+            },
         }
     )
 
     regime_timeframe = str(
-        market.get("regime_timeframe", "4h")
+        market.get(
+            "regime_timeframe",
+            "4h",
+        )
     )
 
     signal_timeframe = str(
-        market.get("signal_timeframe", "1h")
+        market.get(
+            "signal_timeframe",
+            "1h",
+        )
     )
 
-    if regime_timeframe != "4h" or signal_timeframe != "1h":
+    if (
+        regime_timeframe != "4h"
+        or signal_timeframe != "1h"
+    ):
         raise ValueError(
-            "This runner is configured for a 4h regime "
-            "and 1h entry signals. Update the configuration "
-            "and tests together before changing these timeframes."
+            "This runner is configured for "
+            "a 4h regime and 1h entry signals. "
+            "Update the configuration and tests "
+            "together before changing these timeframes."
         )
 
     candle_limit = int(
-        data_config.get("ohlcv_limit", 250)
+        data_config.get(
+            "ohlcv_limit",
+            250,
+        )
     )
 
     minimum_history_4h = 55
+
     minimum_history_1h = max(
         30,
-        int(strategy.get("breakout_lookback", 5)) + 15,
+        int(
+            strategy.get(
+                "breakout_lookback",
+                5,
+            )
+        ) + 15,
     )
 
     minimum_volume_24h = float(
-        market.get("min_quote_volume_24h_usdt", 10_000_000)
+        market.get(
+            "min_quote_volume_24h_usdt",
+            10_000_000,
+        )
     )
 
     maximum_spread_bps = float(
-        market.get("max_spread_bps", 10)
+        market.get(
+            "max_spread_bps",
+            10,
+        )
     )
 
-    print("\nCRYPTO SCOUT AI — SHORT-TERM MOMENTUM SCAN")
+    print(
+        "\nCRYPTO SCOUT AI — "
+        "SHORT-TERM MOMENTUM SCAN"
+    )
     print("=" * 95)
-    print(f"Exchange: {exchange_name}")
-    print(f"Market regime timeframe: {regime_timeframe}")
-    print(f"Entry signal timeframe: {signal_timeframe}")
-    print("Maximum intended holding period: 48 hours")
+    print(
+        f"Exchange: {exchange_name}"
+    )
+    print(
+        f"Market regime timeframe: "
+        f"{regime_timeframe}"
+    )
+    print(
+        f"Entry signal timeframe: "
+        f"{signal_timeframe}"
+    )
+    print(
+        "Maximum intended holding period: "
+        "48 hours"
+    )
     print(
         "Configured universe: "
-        f"{market.get('universe_size', 500)} CoinGecko assets"
+        f"{market.get('universe_size', 500)} "
+        "CoinGecko assets"
     )
     print(
         f"Minimum 24h quote volume: "
@@ -241,7 +367,10 @@ def main() -> None:
         f"Maximum bid/ask spread: "
         f"{maximum_spread_bps:.2f} bps"
     )
-    print("Mode: SCAN ONLY — no positions will be opened.")
+    print(
+        "Mode: PAPER — "
+        "eligible signals may open virtual positions."
+    )
     print()
 
     universe = get_tradable_crypto_universe(
@@ -259,12 +388,18 @@ def main() -> None:
         for coin in universe
     ]
 
-    ticker_snapshots = fetch_ticker_snapshots(
-        exchange,
-        symbols,
+    ticker_snapshots = (
+        fetch_ticker_snapshots(
+            exchange,
+            symbols,
+        )
     )
 
-    scan_time = datetime.now(timezone.utc).isoformat()
+    scan_time = (
+        datetime.now(
+            timezone.utc
+        ).isoformat()
+    )
 
     signals = []
 
@@ -274,7 +409,10 @@ def main() -> None:
     history_rejected = 0
     data_errors = 0
 
-    for index, coin in enumerate(universe, start=1):
+    for index, coin in enumerate(
+        universe,
+        start=1,
+    ):
         ticker = coin["ticker"]
         symbol = coin["exchange_symbol"]
 
@@ -285,36 +423,51 @@ def main() -> None:
             flush=True,
         )
 
-        ticker_data = ticker_snapshots.get(symbol)
+        ticker_data = (
+            ticker_snapshots.get(symbol)
+        )
 
         if not ticker_data:
             ticker_rejected += 1
-            print("SKIP — ticker data unavailable")
+            print(
+                "SKIP — ticker data unavailable"
+            )
             continue
 
-        market_stats = get_market_stats(ticker_data)
+        market_stats = get_market_stats(
+            ticker_data
+        )
 
         if market_stats is None:
             ticker_rejected += 1
-            print("SKIP — volume/spread data incomplete")
+            print(
+                "SKIP — volume/spread data incomplete"
+            )
             continue
 
-        quote_volume = market_stats["quote_volume_24h_usdt"]
-        spread_bps = market_stats["spread_bps"]
+        quote_volume = market_stats[
+            "quote_volume_24h_usdt"
+        ]
+
+        spread_bps = market_stats[
+            "spread_bps"
+        ]
 
         if quote_volume < minimum_volume_24h:
             volume_rejected += 1
             print(
-                f"SKIP — 24h volume "
-                f"${quote_volume:,.0f} below threshold"
+                "SKIP — 24h volume "
+                f"${quote_volume:,.0f} "
+                "below threshold"
             )
             continue
 
         if spread_bps > maximum_spread_bps:
             spread_rejected += 1
             print(
-                f"SKIP — spread "
-                f"{spread_bps:.2f} bps exceeds threshold"
+                "SKIP — spread "
+                f"{spread_bps:.2f} bps "
+                "exceeds threshold"
             )
             continue
 
@@ -334,12 +487,15 @@ def main() -> None:
             )
 
             if (
-                len(regime_df) < minimum_history_4h
-                or len(hourly_df) < minimum_history_1h
+                len(regime_df)
+                < minimum_history_4h
+                or len(hourly_df)
+                < minimum_history_1h
             ):
                 history_rejected += 1
                 print(
-                    "SKIP — insufficient closed candles "
+                    "SKIP — insufficient "
+                    "closed candles "
                     f"(4h={len(regime_df)}, "
                     f"1h={len(hourly_df)})"
                 )
@@ -358,24 +514,36 @@ def main() -> None:
             signals.append(signal)
 
             if signal["entry_eligible"]:
-                decision = "ENTRY SETUP"
+                decision = (
+                    "ENTRY SETUP"
+                )
             else:
                 decision = (
                     "NO ENTRY: "
-                    + ", ".join(signal["rejection_reasons"])
+                    + ", ".join(
+                        signal[
+                            "rejection_reasons"
+                        ]
+                    )
                 )
 
             print(
-                f"score={signal['technical_score']:.2f} | "
-                f"RSI={signal['rsi14']:.1f} | "
-                f"1h volume ratio={signal['volume_ratio_1h']:.2f} | "
-                f"spread={spread_bps:.2f} bps | "
+                f"score="
+                f"{signal['technical_score']:.2f} | "
+                f"RSI="
+                f"{signal['rsi14']:.1f} | "
+                f"1h volume ratio="
+                f"{signal['volume_ratio_1h']:.2f} | "
+                f"spread="
+                f"{spread_bps:.2f} bps | "
                 f"{decision}"
             )
 
         except Exception as exc:
             data_errors += 1
-            print(f"ERROR — {exc}")
+            print(
+                f"ERROR — {exc}"
+            )
 
     eligible_signals = rank_signals(
         signals,
@@ -388,17 +556,47 @@ def main() -> None:
         eligible_only=True,
     )
 
-    print("\nCRYPTO SCOUT AI — DIAGNOSTICS")
+    print(
+        "\nCRYPTO SCOUT AI — "
+        "DIAGNOSTICS"
+    )
     print("=" * 95)
-    print(f"Binance spot pairs in universe: {len(universe)}")
-    print(f"Rejected — ticker data: {ticker_rejected}")
-    print(f"Rejected — 24h volume: {volume_rejected}")
-    print(f"Rejected — spread: {spread_rejected}")
-    print(f"Rejected — historical candles: {history_rejected}")
-    print(f"Data/indicator errors: {data_errors}")
-    print(f"Pairs evaluated by the strategy: {len(signals)}")
-    print(f"Entry-eligible signals: {len(eligible_signals)}")
-    print(f"Top eligible signals: {len(top_signals)}")
+    print(
+        "Binance spot pairs in universe: "
+        f"{len(universe)}"
+    )
+    print(
+        "Rejected — ticker data: "
+        f"{ticker_rejected}"
+    )
+    print(
+        "Rejected — 24h volume: "
+        f"{volume_rejected}"
+    )
+    print(
+        "Rejected — spread: "
+        f"{spread_rejected}"
+    )
+    print(
+        "Rejected — historical candles: "
+        f"{history_rejected}"
+    )
+    print(
+        "Data/indicator errors: "
+        f"{data_errors}"
+    )
+    print(
+        "Pairs evaluated by the strategy: "
+        f"{len(signals)}"
+    )
+    print(
+        "Entry-eligible signals: "
+        f"{len(eligible_signals)}"
+    )
+    print(
+        "Top eligible signals: "
+        f"{len(top_signals)}"
+    )
     print()
 
     print(
@@ -411,7 +609,10 @@ def main() -> None:
         f"{'Spread':>8s} "
         f"{'Eligible':>9s}  Decision"
     )
-    print("-" * 115)
+
+    print(
+        "-" * 115
+    )
 
     for signal in rank_signals(
         signals,
@@ -419,8 +620,14 @@ def main() -> None:
     ):
         decision = (
             "READY"
-            if signal["entry_eligible"]
-            else ", ".join(signal["rejection_reasons"])
+            if signal[
+                "entry_eligible"
+            ]
+            else ", ".join(
+                signal[
+                    "rejection_reasons"
+                ]
+            )
         )
 
         print(
@@ -435,55 +642,133 @@ def main() -> None:
             f"{decision}"
         )
 
-    # Persist eligible candidates only. Existing paper positions are untouched.
+    # ------------------------------------------------------------------
+    # SAVE SCAN RESULTS
+    # ------------------------------------------------------------------
+
     scan_rows = []
 
-    for rank, signal in enumerate(top_signals, start=1):
+    for rank, signal in enumerate(
+        top_signals,
+        start=1,
+    ):
         scan_rows.append(
             {
-                "scan_time": signal["scan_time"],
+                "scan_time": signal[
+                    "scan_time"
+                ],
                 "rank": rank,
-                "ticker": signal["ticker"],
-                "symbol": signal["symbol"],
-                "price": signal["price"],
-                "technical_score": signal["technical_score"],
-                "trend_score": signal["trend_score"],
-                "momentum_score": signal["momentum_score"],
-                "rsi_score": signal["rsi_score"],
-                "volume_score": signal["volume_score"],
-                "breakout_score": signal["breakout_score"],
-                "atr": signal["atr"],
-                "stop_price": signal["stop_price"],
-                "target_price": signal["target_price"],
-                "risk_reward": signal["risk_reward"],
+                "ticker": signal[
+                    "ticker"
+                ],
+                "symbol": signal[
+                    "symbol"
+                ],
+                "price": signal[
+                    "price"
+                ],
+                "technical_score": signal[
+                    "technical_score"
+                ],
+                "trend_score": signal[
+                    "trend_score"
+                ],
+                "momentum_score": signal[
+                    "momentum_score"
+                ],
+                "rsi_score": signal[
+                    "rsi_score"
+                ],
+                "volume_score": signal[
+                    "volume_score"
+                ],
+                "breakout_score": signal[
+                    "breakout_score"
+                ],
+                "atr": signal[
+                    "atr"
+                ],
+                "stop_price": signal[
+                    "stop_price"
+                ],
+                "target_price": signal[
+                    "target_price"
+                ],
+                "risk_reward": signal[
+                    "risk_reward"
+                ],
             }
         )
 
-    insert_scan_results(scan_rows)
+    insert_scan_results(
+        scan_rows
+    )
 
-    print("\nENTRY-ELIGIBLE OPPORTUNITIES")
+    # ------------------------------------------------------------------
+    # PAPER PORTFOLIO
+    # ------------------------------------------------------------------
+
+    print(
+        "\nPAPER PORTFOLIO"
+    )
     print("=" * 95)
 
     if not top_signals:
         print(
-            "No entry satisfied all configured conditions. "
-            "No position was opened."
+            "No eligible signals. "
+            "No paper position opened."
         )
     else:
-        for rank, signal in enumerate(top_signals, start=1):
+        opened = sync_from_top10(
+            signals=top_signals,
+            config=config,
+        )
+
+        if not opened:
             print(
-                f"{rank:2d}. {signal['ticker']:10s} "
-                f"entry={signal['price']:.8g} "
-                f"stop={signal['stop_price']:.8g} "
-                f"target={signal['target_price']:.8g} "
-                f"R/R={signal['risk_reward']:.2f} "
-                f"score={signal['technical_score']:.2f}"
+                "No new paper positions opened. "
+                "The existing portfolio may be full "
+                "or the signals may already be open."
+            )
+
+    # ------------------------------------------------------------------
+    # OPPORTUNITIES
+    # ------------------------------------------------------------------
+
+    print(
+        "\nENTRY-ELIGIBLE OPPORTUNITIES"
+    )
+    print("=" * 95)
+
+    if not top_signals:
+        print(
+            "No entry satisfied all "
+            "configured conditions."
+        )
+    else:
+        for rank, signal in enumerate(
+            top_signals,
+            start=1,
+        ):
+            print(
+                f"{rank:2d}. "
+                f"{signal['ticker']:10s} "
+                f"entry="
+                f"{signal['price']:.8g} "
+                f"stop="
+                f"{signal['stop_price']:.8g} "
+                f"target="
+                f"{signal['target_price']:.8g} "
+                f"R/R="
+                f"{signal['risk_reward']:.2f} "
+                f"score="
+                f"{signal['technical_score']:.2f}"
             )
 
     print(
-        "\nSCAN ONLY: no positions were opened or closed. "
-        "The 48-hour exit manager and risk-based position sizing "
-        "will be implemented separately."
+        "\nSCAN COMPLETE — "
+        "paper execution only. "
+        "No real exchange orders were sent."
     )
 
 

@@ -1,0 +1,39 @@
+{
+  "project": "Crypto Scout AI",
+  "version": "1.1.0",
+  "mode": "PAPER",
+  "updated_at": null,
+  "last_scan_at": null,
+  "last_scan_status": "waiting_for_first_actions_run",
+  "account": {
+    "starting_cash": 10000,
+    "available_cash": 10000,
+    "equity_estimate": 10000,
+    "realized_pnl_net": 0,
+    "unrealized_pnl_net_estimate": 0,
+    "total_return_pct_estimate": 0,
+    "open_positions": 0,
+    "closed_positions": 0,
+    "max_positions": 3
+  },
+  "performance": {
+    "trades_closed": 0,
+    "winners": 0,
+    "losers": 0,
+    "win_rate_pct": 0,
+    "average_closed_pnl": 0
+  },
+  "open_positions": [],
+  "recent_closed_positions": [],
+  "latest_eligible_signals": [],
+  "configuration": {
+    "regime_timeframe": "4h",
+    "signal_timeframe": "1h",
+    "monitor_timeframe": "5m",
+    "max_holding_hours": 48,
+    "risk_per_trade_pct": 0.25,
+    "max_position_notional_pct": 0.1,
+    "live_orders_enabled": false,
+    "leverage_enabled": false
+  }
+}

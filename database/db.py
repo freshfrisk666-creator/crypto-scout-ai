@@ -12,6 +12,10 @@ DB_PATH = Path("data/crypto_scout.db")
 DEFAULT_STARTING_CASH = 10000.0
 
 
+# ---------------------------------------------------------------------------
+# DATABASE CONNECTION
+# ---------------------------------------------------------------------------
+
 @contextmanager
 def get_connection() -> Iterator[sqlite3.Connection]:
     """Open a database connection and handle commit, rollback and cleanup."""
@@ -31,8 +35,57 @@ def get_connection() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def init_db(starting_cash: float = DEFAULT_STARTING_CASH) -> None:
-    """Create the database schema and initialize the virtual account once."""
+# ---------------------------------------------------------------------------
+# SCHEMA
+# ---------------------------------------------------------------------------
+
+def _ensure_position_columns(
+    conn: sqlite3.Connection,
+) -> None:
+    """
+    Add new risk/cost columns to an existing database when necessary.
+
+    SQLite CREATE TABLE IF NOT EXISTS does not modify an existing table,
+    therefore additive migrations are handled explicitly here.
+    """
+    existing_columns = {
+        row["name"]
+        for row in conn.execute(
+            "PRAGMA table_info(positions)"
+        ).fetchall()
+    }
+
+    migrations = {
+        "risk_amount": "REAL",
+        "entry_fill_price": "REAL",
+        "entry_fee": "REAL",
+        "exit_fill_price": "REAL",
+        "exit_fee": "REAL",
+        "cash_committed": "REAL",
+        "total_cost": "REAL",
+        "fee_rate_per_side": "REAL",
+        "slippage_rate_per_side": "REAL",
+    }
+
+    for column_name, column_type in migrations.items():
+        if column_name not in existing_columns:
+            conn.execute(
+                f"ALTER TABLE positions "
+                f"ADD COLUMN {column_name} {column_type}"
+            )
+
+
+def init_db(
+    starting_cash: float = DEFAULT_STARTING_CASH,
+) -> None:
+    """
+    Create the database schema and initialize the virtual account once.
+
+    Existing account cash is never overwritten.
+    """
+    if starting_cash <= 0:
+        raise ValueError("Starting cash must be positive.")
+
     with get_connection() as conn:
         conn.executescript(
             """
@@ -45,7 +98,7 @@ def init_db(starting_cash: float = DEFAULT_STARTING_CASH) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticker TEXT NOT NULL,
                 symbol TEXT NOT NULL,
-                strategy_type TEXT NOT NULL DEFAULT 'SWING',
+                strategy_type TEXT NOT NULL DEFAULT 'SHORT_TERM_MOMENTUM',
                 status TEXT NOT NULL CHECK (
                     status IN ('OPEN', 'CLOSED')
                 ),
@@ -67,7 +120,17 @@ def init_db(starting_cash: float = DEFAULT_STARTING_CASH) -> None:
                 trade_reason TEXT,
                 realized_pnl REAL,
                 realized_return_pct REAL,
-                exit_reason TEXT
+                exit_reason TEXT,
+
+                risk_amount REAL,
+                entry_fill_price REAL,
+                entry_fee REAL,
+                exit_fill_price REAL,
+                exit_fee REAL,
+                cash_committed REAL,
+                total_cost REAL,
+                fee_rate_per_side REAL,
+                slippage_rate_per_side REAL
             );
 
             CREATE INDEX IF NOT EXISTS idx_positions_status
@@ -97,6 +160,9 @@ def init_db(starting_cash: float = DEFAULT_STARTING_CASH) -> None:
             """
         )
 
+        # Add columns when upgrading an older local database.
+        _ensure_position_columns(conn)
+
         account = conn.execute(
             "SELECT id FROM account WHERE id = 1"
         ).fetchone()
@@ -107,6 +173,10 @@ def init_db(starting_cash: float = DEFAULT_STARTING_CASH) -> None:
                 (float(starting_cash),),
             )
 
+
+# ---------------------------------------------------------------------------
+# ACCOUNT
+# ---------------------------------------------------------------------------
 
 def get_cash() -> float:
     """Return the available virtual cash balance."""
@@ -134,6 +204,10 @@ def set_cash(value: float) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# POSITIONS - READ
+# ---------------------------------------------------------------------------
+
 def open_positions() -> list[sqlite3.Row]:
     """Return all currently open paper positions."""
     init_db()
@@ -150,7 +224,7 @@ def open_positions() -> list[sqlite3.Row]:
 
 
 def closed_positions() -> list[sqlite3.Row]:
-    """Return closed positions for future performance analysis."""
+    """Return closed positions for performance analysis."""
     init_db()
 
     with get_connection() as conn:
@@ -193,7 +267,13 @@ def ticker_is_open(ticker: str) -> bool:
     return row is not None
 
 
-def insert_scan_results(rows: list[dict[str, Any]]) -> None:
+# ---------------------------------------------------------------------------
+# SCAN RESULTS
+# ---------------------------------------------------------------------------
+
+def insert_scan_results(
+    rows: list[dict[str, Any]],
+) -> None:
     """Replace the saved scan snapshot with the latest ranked results."""
     init_db()
 
@@ -221,7 +301,11 @@ def insert_scan_results(rows: list[dict[str, Any]]) -> None:
         if not rows:
             return
 
-        placeholders = ", ".join(f":{column}" for column in columns)
+        placeholders = ", ".join(
+            f":{column}"
+            for column in columns
+        )
+
         column_names = ", ".join(columns)
 
         conn.executemany(
@@ -247,7 +331,13 @@ def latest_scan_results() -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def insert_position(data: dict[str, Any]) -> int:
+# ---------------------------------------------------------------------------
+# POSITIONS - OPEN
+# ---------------------------------------------------------------------------
+
+def insert_position(
+    data: dict[str, Any],
+) -> int:
     """Insert a new open paper position and return its database ID."""
     required = [
         "ticker",
@@ -261,10 +351,16 @@ def insert_position(data: dict[str, Any]) -> int:
         "technical_score",
     ]
 
-    missing = [key for key in required if key not in data]
+    missing = [
+        key
+        for key in required
+        if key not in data
+    ]
+
     if missing:
         raise ValueError(
-            f"Missing required position fields: {', '.join(missing)}"
+            "Missing required position fields: "
+            + ", ".join(missing)
         )
 
     if float(data["entry_price"]) <= 0:
@@ -272,6 +368,9 @@ def insert_position(data: dict[str, Any]) -> int:
 
     if float(data["shares"]) <= 0:
         raise ValueError("Position size must be positive.")
+
+    if float(data["notional"]) <= 0:
+        raise ValueError("Position notional must be positive.")
 
     init_db()
 
@@ -296,7 +395,16 @@ def insert_position(data: dict[str, Any]) -> int:
                 volume_score,
                 breakout_score,
                 risk_reward,
-                trade_reason
+                trade_reason,
+                risk_amount,
+                entry_fill_price,
+                entry_fee,
+                exit_fill_price,
+                exit_fee,
+                cash_committed,
+                total_cost,
+                fee_rate_per_side,
+                slippage_rate_per_side
             )
             VALUES (
                 :ticker,
@@ -316,20 +424,34 @@ def insert_position(data: dict[str, Any]) -> int:
                 :volume_score,
                 :breakout_score,
                 :risk_reward,
-                :trade_reason
+                :trade_reason,
+                :risk_amount,
+                :entry_fill_price,
+                :entry_fee,
+                :exit_fill_price,
+                :exit_fee,
+                :cash_committed,
+                :total_cost,
+                :fee_rate_per_side,
+                :slippage_rate_per_side
             )
             """,
             {
                 "ticker": data["ticker"],
                 "symbol": data["symbol"],
-                "strategy_type": data.get("strategy_type", "SWING"),
+                "strategy_type": data.get(
+                    "strategy_type",
+                    "SHORT_TERM_MOMENTUM",
+                ),
                 "entry_time": data["entry_time"],
                 "entry_price": float(data["entry_price"]),
                 "shares": float(data["shares"]),
                 "notional": float(data["notional"]),
                 "stop_price": float(data["stop_price"]),
                 "target_price": float(data["target_price"]),
-                "technical_score": float(data["technical_score"]),
+                "technical_score": float(
+                    data["technical_score"]
+                ),
                 "trend_score": data.get("trend_score"),
                 "momentum_score": data.get("momentum_score"),
                 "rsi_score": data.get("rsi_score"),
@@ -337,11 +459,34 @@ def insert_position(data: dict[str, Any]) -> int:
                 "breakout_score": data.get("breakout_score"),
                 "risk_reward": data.get("risk_reward"),
                 "trade_reason": data.get("trade_reason"),
+                "risk_amount": data.get("risk_amount"),
+                "entry_fill_price": data.get(
+                    "entry_fill_price"
+                ),
+                "entry_fee": data.get("entry_fee"),
+                "exit_fill_price": data.get(
+                    "exit_fill_price"
+                ),
+                "exit_fee": data.get("exit_fee"),
+                "cash_committed": data.get("cash_committed"),
+                "total_cost": data.get("total_cost", 0.0),
+                "fee_rate_per_side": data.get(
+                    "fee_rate_per_side",
+                    0.0,
+                ),
+                "slippage_rate_per_side": data.get(
+                    "slippage_rate_per_side",
+                    0.0,
+                ),
             },
         )
 
         return int(cursor.lastrowid)
 
+
+# ---------------------------------------------------------------------------
+# POSITIONS - CLOSE
+# ---------------------------------------------------------------------------
 
 def close_position(
     position_id: int,
@@ -349,7 +494,12 @@ def close_position(
     exit_price: float,
     exit_reason: str,
 ) -> None:
-    """Close a paper position, record its P&L and release allocated cash."""
+    """
+    Close a paper position.
+
+    The exit execution price includes adverse slippage.
+    The realized P&L is net of entry and exit fees and slippage.
+    """
     if exit_price <= 0:
         raise ValueError("Exit price must be positive.")
 
@@ -374,9 +524,71 @@ def close_position(
         shares = float(position["shares"])
         notional = float(position["notional"])
 
-        pnl = (float(exit_price) - entry_price) * shares
-        return_pct = (
-            (float(exit_price) / entry_price) - 1.0
+        fee_rate = float(
+            position["fee_rate_per_side"] or 0.0
+        )
+
+        slippage_rate = float(
+            position["slippage_rate_per_side"] or 0.0
+        )
+
+        entry_fill_price = (
+            float(position["entry_fill_price"])
+            if position["entry_fill_price"] is not None
+            else entry_price
+        )
+
+        entry_fee = (
+            float(position["entry_fee"])
+            if position["entry_fee"] is not None
+            else entry_fill_price * shares * fee_rate
+        )
+
+        cash_committed = (
+            float(position["cash_committed"])
+            if position["cash_committed"] is not None
+            else notional
+        )
+
+        # Long spot exit: adverse slippage lowers the received price.
+        exit_fill_price = (
+            float(exit_price)
+            * (1.0 - slippage_rate)
+        )
+
+        exit_proceeds = exit_fill_price * shares
+
+        exit_fee = (
+            exit_proceeds * fee_rate
+        )
+
+        gross_pnl = (
+            exit_fill_price - entry_fill_price
+        ) * shares
+
+        realized_pnl = (
+            gross_pnl
+            - entry_fee
+            - exit_fee
+        )
+
+        entry_slippage_cost = (
+            entry_fill_price - entry_price
+        ) * shares
+
+        exit_slippage_cost = (
+            float(exit_price) - exit_fill_price
+        ) * shares
+
+        total_cost = (
+            entry_fee
+            + exit_fee
+            + entry_slippage_cost
+            + exit_slippage_cost
+        )
+
+        realized_return_pct = (
+            realized_pnl / cash_committed
         ) * 100.0
 
         conn.execute(
@@ -385,6 +597,9 @@ def close_position(
             SET status = 'CLOSED',
                 exit_time = ?,
                 exit_price = ?,
+                exit_fill_price = ?,
+                exit_fee = ?,
+                total_cost = ?,
                 realized_pnl = ?,
                 realized_return_pct = ?,
                 exit_reason = ?
@@ -394,18 +609,26 @@ def close_position(
             (
                 exit_time,
                 float(exit_price),
-                pnl,
-                return_pct,
+                exit_fill_price,
+                exit_fee,
+                total_cost,
+                realized_pnl,
+                realized_return_pct,
                 exit_reason,
                 position_id,
             ),
         )
 
+        # Return the net exit proceeds to the virtual account.
         account = conn.execute(
             "SELECT cash FROM account WHERE id = 1"
         ).fetchone()
 
-        new_cash = float(account["cash"]) + notional + pnl
+        new_cash = (
+            float(account["cash"])
+            + exit_proceeds
+            - exit_fee
+        )
 
         conn.execute(
             "UPDATE account SET cash = ? WHERE id = 1",

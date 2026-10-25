@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Crypto Scout AI — dashboard del portafoglio virtuale e delle operazioni paper. Non esegue ordini reali.">
+  <title>Crypto Scout AI · Paper Dashboard</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">CS</div>
+      <div>
+        <p class="eyebrow">RESEARCH · MOMENTUM · PAPER TRADING</p>
+        <h1>Crypto Scout AI</h1>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span class="mode-pill"><span class="pulse"></span> PAPER MODE</span>
+      <span id="updated-at" class="muted">Caricamento dati…</span>
+      <button id="refresh-button" class="secondary-button" type="button">Aggiorna</button>
+    </div>
+  </header>
+
+  <main class="page-content">
+    <section class="notice" aria-label="Modalità simulazione">
+      <strong>Portafoglio simulato</strong>
+      <span>Nessun ordine reale. Dati e P&amp;L non realizzati sono stime basate su prezzi pubblici e sui costi configurati.</span>
+      <span id="safety-status" class="safety-status">Verifica sicurezza…</span>
+    </section>
+
+    <section class="section-heading">
+      <div>
+        <p class="eyebrow">PANORAMICA</p>
+        <h2>Account &amp; performance</h2>
+      </div>
+      <div id="scan-status" class="scan-status">Ultima scansione: —</div>
+    </section>
+
+    <section class="kpi-grid" aria-label="Metriche principali">
+      <article class="kpi-card primary-card">
+        <p>Equity stimata</p>
+        <strong id="equity">—</strong>
+        <span id="total-return" class="kpi-foot">Rendimento totale stimato</span>
+      </article>
+      <article class="kpi-card">
+        <p>Liquidità disponibile</p>
+        <strong id="cash">—</strong>
+        <span class="kpi-foot">Dopo gli impegni delle posizioni aperte</span>
+      </article>
+      <article class="kpi-card">
+        <p>P&amp;L realizzato netto</p>
+        <strong id="realized-pnl">—</strong>
+        <span class="kpi-foot">Trade chiusi, commissioni incluse</span>
+      </article>
+      <article class="kpi-card">
+        <p>P&amp;L non realizzato</p>
+        <strong id="unrealized-pnl">—</strong>
+        <span class="kpi-foot">Stima al prezzo corrente</span>
+      </article>
+      <article class="kpi-card">
+        <p>Posizioni aperte</p>
+        <strong id="open-count">—</strong>
+        <span id="position-limit" class="kpi-foot">Limite configurato</span>
+      </article>
+      <article class="kpi-card">
+        <p>Win rate</p>
+        <strong id="win-rate">—</strong>
+        <span id="trade-count" class="kpi-foot">Trade chiusi</span>
+      </article>
+    </section>
+
+    <section class="content-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">MONITOR 5M · LIMITE 48H</p>
+          <h2>Posizioni aperte</h2>
+        </div>
+        <span id="open-badge" class="count-badge">0 posizioni</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Asset</th>
+              <th>Ingresso</th>
+              <th>Prezzo</th>
+              <th>Stop</th>
+              <th>Target</th>
+              <th>Valore</th>
+              <th>Rischio stimato</th>
+              <th>P&amp;L netto stimato</th>
+              <th>Età</th>
+            </tr>
+          </thead>
+          <tbody id="open-positions-body">
+            <tr><td colspan="9" class="empty-cell">Caricamento…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note">Lo stop/target viene controllato periodicamente da GitHub Actions. La pianificazione è best-effort e non è un servizio di esecuzione in tempo reale.</p>
+    </section>
+
+    <section class="two-column">
+      <article class="content-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">SEGNALI</p>
+            <h2>Ultimi ingressi eleggibili</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Asset</th><th>Prezzo segnale</th><th>Stop</th><th>Target</th><th>Score</th></tr>
+            </thead>
+            <tbody id="signals-body">
+              <tr><td colspan="5" class="empty-cell">Caricamento…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="table-note">Questa tabella mostra solo segnali che hanno superato tutti i filtri. Una tabella vuota significa che l'ultima scansione non ha trovato ingressi completi.</p>
+      </article>
+
+      <article class="content-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">CONFIGURAZIONE ATTIVA</p>
+            <h2>Regole operative</h2>
+          </div>
+        </div>
+        <dl class="config-list">
+          <div><dt>Regime di mercato</dt><dd id="regime-tf">—</dd></div>
+          <div><dt>Segnale d'ingresso</dt><dd id="signal-tf">—</dd></div>
+          <div><dt>Monitoraggio</dt><dd id="monitor-tf">—</dd></div>
+          <div><dt>Durata massima</dt><dd id="max-holding">—</dd></div>
+          <div><dt>Rischio teorico per trade</dt><dd id="risk-pct">—</dd></div>
+          <div><dt>Controvalore massimo / posizione</dt><dd id="notional-pct">—</dd></div>
+          <div><dt>Capitale iniziale</dt><dd id="initial-cash">—</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <section class="content-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">STORICO</p>
+          <h2>Ultimi trade chiusi</h2>
+        </div>
+        <span id="closed-badge" class="count-badge">0 trade</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Asset</th><th>Chiusura</th><th>Prezzo uscita</th><th>Motivo</th><th>P&amp;L netto</th><th>Rendimento</th><th>Costi</th></tr>
+          </thead>
+          <tbody id="closed-positions-body">
+            <tr><td colspan="7" class="empty-cell">Nessun trade chiuso.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Crypto Scout AI · Paper research dashboard</span>
+      <span id="footer-status">I dati vengono pubblicati da GitHub Actions.</span>
+    </footer>
+  </main>
+</body>
+</html>

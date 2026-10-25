@@ -1,0 +1,78 @@
+name: Crypto Scout AI - Paper Engine and Dashboard
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Monitor every 5 minutes. GitHub scheduled runs are best-effort and can be delayed.
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: crypto-scout-ai-paper-state
+  cancel-in-progress: false
+
+jobs:
+  paper-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Run automated tests
+        run: python -m pytest -q
+
+      - name: Monitor positions, scan if due, and generate dashboard data
+        id: cycle
+        run: python -m scripts.run_actions_cycle
+
+      - name: Persist paper-trading state
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/actions_state.json
+          git add -f data/crypto_scout.db
+          if git diff --cached --quiet; then
+            echo "No persistent paper-state changes to commit."
+          else
+            git commit -m "Update Crypto Scout AI paper state"
+            git push origin HEAD:main
+          fi
+
+      - name: Configure GitHub Pages
+        if: steps.cycle.outputs.publish_dashboard == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload dashboard site
+        if: steps.cycle.outputs.publish_dashboard == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard
+
+      - name: Deploy dashboard to GitHub Pages
+        if: steps.cycle.outputs.publish_dashboard == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
