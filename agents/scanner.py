@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import os
@@ -35,11 +36,11 @@ def load_config(
 
 def configure_public_market_data_endpoint(exchange):
     """
-    Configure Binance's documented public market-data endpoint.
+    Configure Binance public market data for spot markets only.
 
-    Only the public API base URL is changed.
-    The private API URL remains unchanged.
-    No order endpoints are called by this function.
+    Uses the documented public spot market-data endpoint.
+    Prevents CCXT from requesting unnecessary futures metadata.
+    Does not configure credentials or send exchange orders.
     """
     if getattr(exchange, "id", None) == "binance":
         api_urls = exchange.urls.get("api")
@@ -49,7 +50,27 @@ def configure_public_market_data_endpoint(exchange):
                 "Unexpected CCXT Binance API URL configuration."
             )
 
+        # Public spot market data only.
         api_urls["public"] = BINANCE_PUBLIC_DATA_API
+
+        # Force spot as the default market type.
+        options = getattr(exchange, "options", None)
+
+        if not isinstance(options, dict):
+            raise RuntimeError(
+                "Unexpected CCXT Binance options configuration."
+            )
+
+        options["defaultType"] = "spot"
+
+        # Load spot markets only; do not request futures metadata.
+        fetch_markets = options.get("fetchMarkets")
+
+        if not isinstance(fetch_markets, dict):
+            fetch_markets = {}
+
+        fetch_markets["types"] = ["spot"]
+        options["fetchMarkets"] = fetch_markets
 
     return exchange
 
@@ -529,12 +550,15 @@ def get_tradable_crypto_universe(
                 "enableRateLimit": True,
                 "options": {
                     "defaultType": "spot",
+                    "fetchMarkets": {
+                        "types": ["spot"],
+                    },
                 },
             }
         )
 
-    # Apply the documented public data endpoint whether this function
-    # created the exchange or received an existing exchange instance.
+    # Apply the public endpoint and spot-only configuration,
+    # whether the exchange was created here or passed in.
     exchange = configure_public_market_data_endpoint(
         exchange
     )

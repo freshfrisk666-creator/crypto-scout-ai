@@ -1,3 +1,4 @@
+
 from agents.scanner import (
     configure_public_market_data_endpoint,
     get_top_crypto_universe,
@@ -299,18 +300,27 @@ def test_universe_paginates_until_target_size(monkeypatch):
 
 def test_binance_public_endpoint_is_overridden_only():
     class FakeExchange:
-        id = "binance"
+        def __init__(self):
+            self.id = "binance"
 
-        urls = {
-            "api": {
-                "public": (
-                    "https://api.binance.com/api/v3"
-                ),
-                "private": (
-                    "https://api.binance.com/api/v3"
-                ),
+            self.urls = {
+                "api": {
+                    "public": (
+                        "https://api.binance.com/api/v3"
+                    ),
+                    "private": (
+                        "https://api.binance.com/api/v3"
+                    ),
+                }
             }
-        }
+
+            self.options = {
+                "defaultType": "future",
+                "fetchMarkets": {
+                    "types": ["spot", "linear"],
+                },
+                "enableRateLimit": True,
+            }
 
     exchange = FakeExchange()
 
@@ -329,3 +339,12 @@ def test_binance_public_endpoint_is_overridden_only():
         exchange.urls["api"]["private"]
         == "https://api.binance.com/api/v3"
     )
+
+    assert exchange.options["defaultType"] == "spot"
+
+    assert (
+        exchange.options["fetchMarkets"]["types"]
+        == ["spot"]
+    )
+
+    assert exchange.options["enableRateLimit"] is True
