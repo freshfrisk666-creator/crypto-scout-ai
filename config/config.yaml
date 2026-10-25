@@ -1,19 +1,13 @@
-# ============================================================
-# CRYPTO SCOUT AI — V1 CONFIGURATION
-# Independent cryptocurrency paper-trading project
-# ============================================================
-
 project:
   name: "crypto-scout-ai"
-  version: "1.0.0"
+  version: "1.1.0"
   mode: "PAPER"
-
-# -------------------- MARKET UNIVERSE -----------------------
 
 market:
   universe_size: 200
+  exchange: "binance"
+  quote_currency: "USDT"
 
-  # Exclude stablecoins from the trading universe.
   stablecoin_exclusions:
     - USDT
     - USDC
@@ -25,80 +19,97 @@ market:
     - USDD
     - PYUSD
     - USD1
+    - USDG
+    - RLUSD
+    - U
     - FRAX
     - GUSD
     - LUSD
+    - USDP
+    - BUSD
+    - USTC
+    - CRVUSD
 
-  quote_currency: "USDT"
-  exchange: "binance"
+  stablecoin_name_keywords:
+    - "stablecoin"
+    - "stables"
+    - "usd coin"
 
-  # Generate swing-trading signals from 4-hour candles.
-  signal_timeframe: "4h"
+  tokenized_commodity_exclusions:
+    - XAUT
+    - PAXG
+    - KAU
+    - KAG
+    - XAUM
+    - PMGT
+    - DGX
+    - VNXAU
 
-  # Monitor open positions using 5-minute market data.
-  monitor_timeframe: "5m"
+  regime_timeframe: "15m"
+  setup_timeframe: "5m"
+  entry_timeframe: "1m"
 
-  # Minimum historical candles required for analysis.
-  # 220 four-hour candles provide enough data for SMA200.
-  signal_bars: 220
+  # Legacy keys retained temporarily until the scanner is migrated.
+  signal_timeframe: "5m"
+  monitor_timeframe: "1m"
+  signal_bars: 250
+  min_avg_dollar_volume: 1000000
 
-  # Minimum average dollar volume per 4-hour candle.
-  # This is a preliminary liquidity threshold to validate.
-  min_avg_dollar_volume: 5000000
-
-# ---------------------- STRATEGY ----------------------------
+  min_quote_volume_24h_usdt: 10000000
+  max_spread_bps: 10
 
 strategy:
-  type: "SWING"
-
+  type: "SCALP"
   atr_period: 14
-  stop_atr_multiple: 1.5
-  target_atr_multiple: 3.0
 
-  # Paper portfolio limits.
-  max_positions: 10
+  stop_atr_multiple: 1.0
+  target_atr_multiple: 1.5
+  max_holding_minutes: 30
+  cooldown_minutes: 15
+
   starting_cash: 10000.0
+  max_positions: 3
+  risk_per_trade_pct: 0.25
+  max_position_notional_pct: 0.10
 
-# -------------------- TECHNICAL SCORING ---------------------
+  # Initial entry hypothesis, to be tested.
+  regime_ema_fast: 20
+  regime_ema_slow: 50
+  setup_ema_fast: 9
+  setup_ema_slow: 21
+  rsi_min: 50
+  rsi_max: 70
+  min_volume_ratio: 1.2
+  breakout_lookback: 5
 
 scoring:
-  weights:
+  scalp_weights:
     trend: 0.30
-    momentum: 0.25
+    setup: 0.25
     rsi: 0.15
     volume: 0.15
     breakout: 0.15
 
-# -------------------- PAPER PORTFOLIO -----------------------
+costs:
+  # Provisional simulation assumptions, not a fee quote.
+  fee_rate_per_side: 0.001
+  slippage_rate_per_side: 0.0005
 
 portfolio:
-  max_positions: 10
-
-  # Maximum initial allocation as a fraction of available cash.
-  position_size_fraction: 0.10
-
-  # Do not replace existing open positions automatically.
+  max_positions: 3
   replace_open_positions: false
 
-# ---------------------- DATA SOURCES ------------------------
-
-data:
-  coingecko_url: "https://api.coingecko.com/api/v3/coins/markets"
-
-  timeout_seconds: 20
-
-  # Historical OHLCV candles requested from the exchange.
-  ohlcv_limit: 250
-
-# ---------------------- MONITORING --------------------------
-
 monitor:
-  enabled: true
-  interval_minutes: 5
+  mode: "websocket"
+  reconnect_max_delay_seconds: 30
+  close_on_time_limit: true
   check_stop: true
   check_target: true
 
-# ---------------------- SAFETY ------------------------------
+data:
+  coingecko_url: "https://api.coingecko.com/api/v3/coins/markets"
+  timeout_seconds: 20
+  ohlcv_limit: 250
 
 safety:
   paper_trading_only: true

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from datetime import datetime, timezone
 
 import ccxt
@@ -10,10 +9,12 @@ from agents.scanner import (
     get_tradable_crypto_universe,
     load_config,
 )
-from agents.technical import add_indicators
 from database.db import init_db, insert_scan_results
-from portfolio.paper_trading import sync_from_top10
-from scoring.signal_engine import build_signal, select_top_signals
+from scoring.signal_engine import (
+    build_scalp_signal,
+    rank_signals,
+    select_top_signals,
+)
 
 
 def fetch_closed_ohlcv(
@@ -22,8 +23,7 @@ def fetch_closed_ohlcv(
     timeframe: str,
     limit: int,
 ) -> pd.DataFrame:
-    """Fetch OHLCV data and exclude candles that have not closed yet."""
-
+    """Fetch OHLCV and discard candles which have not closed yet."""
     candles = exchange.fetch_ohlcv(
         symbol,
         timeframe=timeframe,
@@ -51,16 +51,14 @@ def fetch_closed_ohlcv(
         utc=True,
     )
 
-    # Use only completed candles to avoid scoring an unfinished 4h candle.
     timeframe_seconds = exchange.parse_timeframe(timeframe)
     now = pd.Timestamp.now(tz="UTC")
-
-    candle_close_time = df["timestamp"] + pd.to_timedelta(
+    candle_close = df["timestamp"] + pd.to_timedelta(
         timeframe_seconds,
         unit="s",
     )
 
-    df = df.loc[candle_close_time <= now].copy()
+    df = df.loc[candle_close <= now].copy()
     df = df.sort_values("timestamp").drop_duplicates(
         subset=["timestamp"]
     )
@@ -68,33 +66,89 @@ def fetch_closed_ohlcv(
     return df.reset_index(drop=True)
 
 
+def _number(value) -> float | None:
+    """Safely convert a value to a finite float."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not pd.notna(number) or number < 0:
+        return None
+
+    return number
+
+
+def get_market_stats(ticker: dict) -> dict | None:
+    """
+    Extract 24h quote volume and bid/ask spread from a CCXT ticker.
+
+    Assets without a reliable quote-volume or spread snapshot are rejected
+    rather than treated as liquid by assumption.
+    """
+    info = ticker.get("info") or {}
+
+    quote_volume = _number(
+        ticker.get("quoteVolume", info.get("quoteVolume"))
+    )
+    bid = _number(ticker.get("bid", info.get("bidPrice")))
+    ask = _number(ticker.get("ask", info.get("askPrice")))
+
+    if quote_volume is None or bid is None or ask is None:
+        return None
+
+    if quote_volume <= 0 or bid <= 0 or ask < bid:
+        return None
+
+    mid = (bid + ask) / 2.0
+    if mid <= 0:
+        return None
+
+    spread_bps = ((ask - bid) / mid) * 10000.0
+
+    return {
+        "quote_volume_24h_usdt": quote_volume,
+        "spread_bps": spread_bps,
+    }
+
+
+def fetch_ticker_snapshots(exchange, symbols: list[str]) -> dict:
+    """Get a bulk ticker snapshot, falling back to individual requests."""
+    try:
+        tickers = exchange.fetch_tickers()
+        if isinstance(tickers, dict) and tickers:
+            return tickers
+    except Exception as exc:
+        print(f"Bulk ticker request failed; using fallback: {exc}")
+
+    result = {}
+
+    for symbol in symbols:
+        try:
+            result[symbol] = exchange.fetch_ticker(symbol)
+        except Exception as exc:
+            print(f"Ticker unavailable for {symbol}: {exc}")
+
+    return result
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Crypto Scout AI — cryptocurrency scanner"
-    )
-    parser.add_argument(
-        "--paper",
-        action="store_true",
-        help="Open paper positions from the Top 10 signals.",
-    )
-    args = parser.parse_args()
-
     config = load_config()
-
-    starting_cash = float(
-        config["strategy"].get("starting_cash", 10000.0)
-    )
-    init_db(starting_cash=starting_cash)
-
-    exchange_name = config["market"]["exchange"].lower()
-
-    if not hasattr(ccxt, exchange_name):
-        raise ValueError(
-            f"Exchange not supported by CCXT: {exchange_name}"
+    init_db(
+        starting_cash=float(
+            config.get("strategy", {}).get("starting_cash", 10000.0)
         )
+    )
+
+    market = config["market"]
+    strategy = config["strategy"]
+    data_config = config["data"]
+
+    exchange_name = str(market.get("exchange", "binance")).lower()
+    if not hasattr(ccxt, exchange_name):
+        raise ValueError(f"Unsupported CCXT exchange: {exchange_name}")
 
     exchange_class = getattr(ccxt, exchange_name)
-
     exchange = exchange_class(
         {
             "enableRateLimit": True,
@@ -102,13 +156,16 @@ def main() -> None:
         }
     )
 
-    timeframe = config["market"]["signal_timeframe"]
-    candle_limit = int(config["data"]["ohlcv_limit"])
-    minimum_bars = int(config["market"]["signal_bars"])
-    minimum_dollar_volume = float(
-        config["market"]["min_avg_dollar_volume"]
+    regime_tf = str(market.get("regime_timeframe", "15m"))
+    setup_tf = str(market.get("setup_timeframe", "5m"))
+    entry_tf = str(market.get("entry_timeframe", "1m"))
+
+    ohlcv_limit = int(data_config.get("ohlcv_limit", 250))
+    minimum_24h_volume = float(
+        market.get("min_quote_volume_24h_usdt", 10_000_000)
     )
-    atr_period = int(config["strategy"].get("atr_period", 14))
+    max_spread_bps = float(market.get("max_spread_bps", 10))
+    atr_period = int(strategy.get("atr_period", 14))
 
     universe = get_tradable_crypto_universe(
         config,
@@ -116,148 +173,162 @@ def main() -> None:
     )
 
     if not universe:
-        raise RuntimeError(
-            "No tradable crypto pairs were found. "
-            "Check CoinGecko, exchange connectivity and configuration."
-        )
+        raise RuntimeError("No eligible Binance spot pairs were found.")
 
-    print("\nCRYPTO SCOUT AI — SCAN STARTED")
-    print("=" * 90)
+    symbols = [coin["exchange_symbol"] for coin in universe]
+    ticker_snapshots = fetch_ticker_snapshots(exchange, symbols)
+
+    scan_time = datetime.now(timezone.utc).isoformat()
+    signals = []
+
+    volume_rejected = 0
+    spread_rejected = 0
+    ticker_rejected = 0
+    historical_rejected = 0
+    data_errors = 0
+
+    print("\nCRYPTO SCOUT AI — SCALP SCAN")
+    print("=" * 95)
     print(f"Exchange: {exchange_name}")
-    print(f"Signal timeframe: {timeframe}")
-    print(f"Tradable pairs found: {len(universe)}")
-    print(f"Minimum average dollar volume: ${minimum_dollar_volume:,.0f}")
-    print(f"Virtual starting capital: ${starting_cash:,.2f}")
-    print(f"Mode: {'PAPER TRADING' if args.paper else 'SCAN ONLY'}")
+    print(f"Timeframes: regime={regime_tf}, setup={setup_tf}, entry={entry_tf}")
+    print(f"Pairs in starting universe: {len(universe)}")
+    print(f"Minimum 24h quote volume: ${minimum_24h_volume:,.0f}")
+    print(f"Maximum spread: {max_spread_bps:.1f} bps")
+    print("Execution mode: SCAN ONLY")
     print()
 
-    signals = []
-    successful_ohlcv = 0
-    sufficient_history = 0
-    liquid_assets = 0
-    scan_time = datetime.now(timezone.utc).isoformat()
-
-    seen_symbols = set()
-
     for index, coin in enumerate(universe, start=1):
-        symbol = coin["exchange_symbol"]
         ticker = coin["ticker"]
+        symbol = coin["exchange_symbol"]
 
-        # Avoid scoring the same exchange market more than once.
-        if symbol in seen_symbols:
+        market_ticker = ticker_snapshots.get(symbol)
+        if not market_ticker:
+            ticker_rejected += 1
+            print(f"[{index}/{len(universe)}] {ticker}: no ticker snapshot")
             continue
-        seen_symbols.add(symbol)
 
-        print(
-            f"[{index}/{len(universe)}] "
-            f"{ticker} ({symbol}) ... ",
-            end="",
-            flush=True,
-        )
+        stats = get_market_stats(market_ticker)
+        if stats is None:
+            ticker_rejected += 1
+            print(f"[{index}/{len(universe)}] {ticker}: missing volume/spread")
+            continue
+
+        if stats["quote_volume_24h_usdt"] < minimum_24h_volume:
+            volume_rejected += 1
+            print(
+                f"[{index}/{len(universe)}] {ticker}: "
+                f"24h volume too low "
+                f"(${stats['quote_volume_24h_usdt']:,.0f})"
+            )
+            continue
+
+        if stats["spread_bps"] > max_spread_bps:
+            spread_rejected += 1
+            print(
+                f"[{index}/{len(universe)}] {ticker}: "
+                f"spread too wide ({stats['spread_bps']:.2f} bps)"
+            )
+            continue
 
         try:
-            df = fetch_closed_ohlcv(
-                exchange=exchange,
-                symbol=symbol,
-                timeframe=timeframe,
-                limit=candle_limit,
+            regime_df = fetch_closed_ohlcv(
+                exchange, symbol, regime_tf, ohlcv_limit
             )
-
-            if df.empty:
-                print("SKIP — no closed candles")
-                continue
-
-            successful_ohlcv += 1
-
-            if len(df) < minimum_bars:
-                print(
-                    f"SKIP — insufficient history "
-                    f"({len(df)} candles)"
-                )
-                continue
-
-            sufficient_history += 1
-
-            # Approximate quote-currency turnover per 4-hour candle.
-            # This is not a 24-hour volume measure.
-            dollar_turnover = df["close"] * df["volume"]
-            avg_dollar_volume = float(
-                dollar_turnover.rolling(20).mean().iloc[-1]
+            setup_df = fetch_closed_ohlcv(
+                exchange, symbol, setup_tf, ohlcv_limit
+            )
+            entry_df = fetch_closed_ohlcv(
+                exchange, symbol, entry_tf, ohlcv_limit
             )
 
             if (
-                pd.isna(avg_dollar_volume)
-                or avg_dollar_volume < minimum_dollar_volume
+                len(regime_df) < 55
+                or len(setup_df) < 30
+                or len(entry_df) < 20
             ):
+                historical_rejected += 1
                 print(
-                    f"SKIP — low average 4h turnover "
-                    f"(${avg_dollar_volume:,.0f})"
+                    f"[{index}/{len(universe)}] {ticker}: "
+                    "insufficient closed-candle history"
                 )
                 continue
 
-            liquid_assets += 1
-
-            df = add_indicators(
-                df,
-                atr_period=atr_period,
-            )
-
-            row = df.iloc[-1]
-
-            required_indicators = [
-                "sma20",
-                "sma50",
-                "sma200",
-                "rsi14",
-                "atr14",
-                "volume_ratio",
-                "mom21",
-                "mom63",
-                "breakout_strength",
-            ]
-
-            if any(
-                pd.isna(row[column])
-                for column in required_indicators
-            ):
-                print("SKIP — incomplete indicators")
-                continue
-
-            signal = build_signal(
-                row,
+            signal = build_scalp_signal(
+                regime_df,
+                setup_df,
+                entry_df,
                 ticker=ticker,
                 symbol=symbol,
                 config=config,
                 scan_time=scan_time,
-            )
-
-            signal["avg_dollar_volume"] = avg_dollar_volume
-            signal["market_cap_rank"] = coin.get(
-                "market_cap_rank"
+                market_stats=stats,
             )
 
             signals.append(signal)
 
+            outcome = (
+                "ENTRY SETUP"
+                if signal["entry_eligible"]
+                else "NO ENTRY: " + ", ".join(
+                    signal["rejection_reasons"]
+                )
+            )
+
             print(
-                f"OK — score={signal['technical_score']:.2f}, "
-                f"turnover=${avg_dollar_volume:,.0f}"
+                f"[{index}/{len(universe)}] {ticker}: "
+                f"score={signal['technical_score']:.2f} | "
+                f"spread={stats['spread_bps']:.2f} bps | {outcome}"
             )
 
         except Exception as exc:
-            print(f"ERROR — {exc}")
+            data_errors += 1
+            print(f"[{index}/{len(universe)}] {ticker}: ERROR — {exc}")
 
-    if successful_ohlcv == 0:
-        raise RuntimeError(
-            "No usable OHLCV data was retrieved. "
-            "Previous scan results have not been replaced."
-        )
-
+    eligible = rank_signals(signals, eligible_only=True)
     top10 = select_top_signals(
-        signals,
+        eligible,
         limit=10,
+        eligible_only=True,
     )
 
-    # Persist the latest scan snapshot in the local SQLite database.
+    print("\nCRYPTO SCOUT AI — SCALP DIAGNOSTICS")
+    print("=" * 95)
+    print(f"Pairs in starting universe: {len(universe)}")
+    print(f"Rejected: insufficient ticker data: {ticker_rejected}")
+    print(f"Rejected: 24h volume: {volume_rejected}")
+    print(f"Rejected: spread: {spread_rejected}")
+    print(f"Rejected: historical candles: {historical_rejected}")
+    print(f"Data errors: {data_errors}")
+    print(f"Pairs assessed by scalp engine: {len(signals)}")
+    print(f"Entry-eligible signals: {len(eligible)}")
+    print(f"Top eligible signals: {len(top10)}")
+    print()
+
+    print(
+        f"{'Ticker':10s} {'Score':>7s} {'Regime':>8s} "
+        f"{'Setup':>7s} {'RSI':>7s} {'Vol5m':>8s} "
+        f"{'Spread':>8s} {'Eligible':>9s}  Decision"
+    )
+    print("-" * 110)
+
+    for signal in rank_signals(signals, eligible_only=False):
+        reasons = (
+            "READY"
+            if signal["entry_eligible"]
+            else ", ".join(signal["rejection_reasons"])
+        )
+
+        print(
+            f"{signal['ticker']:10s} "
+            f"{signal['technical_score']:7.2f} "
+            f"{str(signal['regime_ok']):>8s} "
+            f"{str(signal['setup_ok']):>7s} "
+            f"{signal['rsi14']:7.2f} "
+            f"{signal['volume_ratio_5m']:8.2f} "
+            f"{signal['spread_bps']:8.2f} "
+            f"{str(signal['entry_eligible']):>9s}  {reasons}"
+        )
+
     scan_rows = []
 
     for rank, signal in enumerate(top10, start=1):
@@ -283,40 +354,27 @@ def main() -> None:
 
     insert_scan_results(scan_rows)
 
-    print("\nCRYPTO SCOUT AI — TOP OPPORTUNITIES")
-    print("=" * 100)
-    print(f"Pairs found: {len(universe)}")
-    print(f"Pairs with candle data: {successful_ohlcv}")
-    print(f"Pairs with sufficient history: {sufficient_history}")
-    print(f"Pairs passing liquidity filter: {liquid_assets}")
-    print(f"Valid signals: {len(signals)}")
-    print(f"Top opportunities: {len(top10)}")
-    print()
+    print("\nENTRY-ELIGIBLE SCALP SETUPS")
+    print("=" * 95)
 
     if not top10:
-        print("No valid signals met the configured requirements.")
-        print("No paper positions will be opened.")
-        return
-
-    for rank, signal in enumerate(top10, start=1):
-        print(
-            f"{rank:2d}. {signal['ticker']:10s} "
-            f"score={signal['technical_score']:6.2f} "
-            f"entry={signal['price']:.8g} "
-            f"stop={signal['stop_price']:.8g} "
-            f"target={signal['target_price']:.8g} "
-            f"R/R={signal['risk_reward']:.2f}"
-        )
-
-    if args.paper:
-        opened = sync_from_top10(top10, config)
-        print(f"\nNew paper positions opened: {len(opened)}")
+        print("No entry setup satisfied all conditions in this scan.")
     else:
-        print("\nSCAN ONLY: no paper positions were opened.")
-        print(
-            "After reviewing the results, run with --paper "
-            "to enable simulated position opening."
-        )
+        for rank, signal in enumerate(top10, start=1):
+            print(
+                f"{rank:2d}. {signal['ticker']:10s} "
+                f"entry={signal['price']:.8g} "
+                f"stop={signal['stop_price']:.8g} "
+                f"target={signal['target_price']:.8g} "
+                f"R/R={signal['risk_reward']:.2f} "
+                f"score={signal['technical_score']:.2f}"
+            )
+
+    print(
+        "\nSCAN ONLY: no paper positions were opened. "
+        "The risk-sized entry and continuous exit monitor "
+        "must be validated before paper execution."
+    )
 
 
 if __name__ == "__main__":
