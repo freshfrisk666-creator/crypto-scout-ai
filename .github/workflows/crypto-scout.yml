@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
 
   schedule:
-    # Run every 5 minutes, offset from the top of the hour.
-    # GitHub scheduled workflows are best-effort.
-    - cron: "2-57/5 * * * *"
+    # Run every 5 minutes, using explicit UTC minute values.
+    # GitHub Actions scheduling is best-effort.
+    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
 
 permissions:
   contents: write
