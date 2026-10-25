@@ -1,11 +1,15 @@
+
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="Crypto Scout AI — dashboard del portafoglio virtuale e delle operazioni paper. Non esegue ordini reali.">
-  <title>Crypto Scout AI · Paper Dashboard</title>
+  <meta
+    name="description"
+    content="Crypto Scout AI — virtual portfolio and paper-trading dashboard. No real orders are executed."
+  >
+  <title>Crypto Scout AI · Paper Trading Dashboard</title>
   <link rel="stylesheet" href="./style.css">
   <script src="./app.js" defer></script>
 </head>
@@ -18,128 +22,204 @@
         <h1>Crypto Scout AI</h1>
       </div>
     </div>
+
     <div class="topbar-meta">
-      <span class="mode-pill"><span class="pulse"></span> PAPER MODE</span>
-      <span id="updated-at" class="muted">Caricamento dati…</span>
-      <button id="refresh-button" class="secondary-button" type="button">Aggiorna</button>
+      <span class="mode-pill">
+        <span class="pulse"></span>
+        PAPER MODE
+      </span>
+      <span id="updated-at" class="muted">Loading data...</span>
+      <button
+        id="refresh-button"
+        class="secondary-button"
+        type="button"
+      >Refresh</button>
     </div>
   </header>
 
   <main class="page-content">
-    <section class="notice" aria-label="Modalità simulazione">
-      <strong>Portafoglio simulato</strong>
-      <span>Nessun ordine reale. Dati e P&amp;L non realizzati sono stime basate su prezzi pubblici e sui costi configurati.</span>
-      <span id="safety-status" class="safety-status">Verifica sicurezza…</span>
+    <section class="notice" aria-label="Paper trading notice">
+      <strong>Simulated portfolio</strong>
+      <span>
+        No real orders are placed. Unrealized P&amp;L and portfolio
+        values are estimates based on public prices and configured costs.
+      </span>
+      <span id="safety-status" class="safety-status">
+        Checking safety settings...
+      </span>
     </section>
 
     <section class="section-heading">
       <div>
-        <p class="eyebrow">PANORAMICA</p>
-        <h2>Account &amp; performance</h2>
+        <p class="eyebrow">OVERVIEW</p>
+        <h2>Account &amp; Performance</h2>
       </div>
-      <div id="scan-status" class="scan-status">Ultima scansione: —</div>
+      <div id="scan-status" class="scan-status">
+        Last scan: —
+      </div>
     </section>
 
-    <section class="kpi-grid" aria-label="Metriche principali">
+    <section class="kpi-grid" aria-label="Key performance metrics">
       <article class="kpi-card primary-card">
-        <p>Equity stimata</p>
+        <p>Estimated Equity</p>
         <strong id="equity">—</strong>
-        <span id="total-return" class="kpi-foot">Rendimento totale stimato</span>
+        <span id="total-return" class="kpi-foot">
+          Estimated total return
+        </span>
       </article>
+
       <article class="kpi-card">
-        <p>Liquidità disponibile</p>
+        <p>Available Cash</p>
         <strong id="cash">—</strong>
-        <span class="kpi-foot">Dopo gli impegni delle posizioni aperte</span>
+        <span class="kpi-foot">
+          After cash committed to open positions
+        </span>
       </article>
+
       <article class="kpi-card">
-        <p>P&amp;L realizzato netto</p>
+        <p>Net Realized P&amp;L</p>
         <strong id="realized-pnl">—</strong>
-        <span class="kpi-foot">Trade chiusi, commissioni incluse</span>
+        <span class="kpi-foot">
+          Closed trades, including fees
+        </span>
       </article>
+
       <article class="kpi-card">
-        <p>P&amp;L non realizzato</p>
+        <p>Estimated Unrealized P&amp;L</p>
         <strong id="unrealized-pnl">—</strong>
-        <span class="kpi-foot">Stima al prezzo corrente</span>
+        <span class="kpi-foot">
+          Estimate at current market prices
+        </span>
       </article>
+
       <article class="kpi-card">
-        <p>Posizioni aperte</p>
+        <p>Open Positions</p>
         <strong id="open-count">—</strong>
-        <span id="position-limit" class="kpi-foot">Limite configurato</span>
+        <span id="position-limit" class="kpi-foot">
+          Configured position limit
+        </span>
       </article>
+
       <article class="kpi-card">
-        <p>Win rate</p>
+        <p>Win Rate</p>
         <strong id="win-rate">—</strong>
-        <span id="trade-count" class="kpi-foot">Trade chiusi</span>
+        <span id="trade-count" class="kpi-foot">
+          Closed trades
+        </span>
       </article>
     </section>
 
     <section class="content-panel">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">MONITOR 5M · LIMITE 48H</p>
-          <h2>Posizioni aperte</h2>
+          <p class="eyebrow">5-MINUTE MONITOR · 48-HOUR MAX HOLD</p>
+          <h2>Open Positions</h2>
         </div>
-        <span id="open-badge" class="count-badge">0 posizioni</span>
+        <span id="open-badge" class="count-badge">0 positions</span>
       </div>
+
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Asset</th>
-              <th>Ingresso</th>
-              <th>Prezzo</th>
-              <th>Stop</th>
-              <th>Target</th>
-              <th>Valore</th>
-              <th>Rischio stimato</th>
-              <th>P&amp;L netto stimato</th>
-              <th>Età</th>
+              <th>Entry Price</th>
+              <th>Current Price</th>
+              <th>Stop Loss</th>
+              <th>Target Price</th>
+              <th>Position Value</th>
+              <th>Estimated Risk</th>
+              <th>Estimated Net P&amp;L</th>
+              <th>Position Age</th>
             </tr>
           </thead>
           <tbody id="open-positions-body">
-            <tr><td colspan="9" class="empty-cell">Caricamento…</td></tr>
+            <tr>
+              <td colspan="9" class="empty-cell">Loading...</td>
+            </tr>
           </tbody>
         </table>
       </div>
-      <p class="table-note">Lo stop/target viene controllato periodicamente da GitHub Actions. La pianificazione è best-effort e non è un servizio di esecuzione in tempo reale.</p>
+
+      <p class="table-note">
+        Stop-loss and target levels are checked periodically by
+        GitHub Actions. Scheduled runs are best-effort and are not
+        a real-time execution service.
+      </p>
     </section>
 
     <section class="two-column">
       <article class="content-panel">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">SEGNALI</p>
-            <h2>Ultimi ingressi eleggibili</h2>
+            <p class="eyebrow">SIGNALS</p>
+            <h2>Latest Eligible Signals</h2>
           </div>
         </div>
+
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>Asset</th><th>Prezzo segnale</th><th>Stop</th><th>Target</th><th>Score</th></tr>
+              <tr>
+                <th>Asset</th>
+                <th>Signal Price</th>
+                <th>Stop Loss</th>
+                <th>Target Price</th>
+                <th>Technical Score</th>
+              </tr>
             </thead>
             <tbody id="signals-body">
-              <tr><td colspan="5" class="empty-cell">Caricamento…</td></tr>
+              <tr>
+                <td colspan="5" class="empty-cell">Loading...</td>
+              </tr>
             </tbody>
           </table>
         </div>
-        <p class="table-note">Questa tabella mostra solo segnali che hanno superato tutti i filtri. Una tabella vuota significa che l'ultima scansione non ha trovato ingressi completi.</p>
+
+        <p class="table-note">
+          This table only displays signals that passed all configured
+          filters. An empty table means the latest scan found no
+          qualifying entries.
+        </p>
       </article>
 
       <article class="content-panel">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">CONFIGURAZIONE ATTIVA</p>
-            <h2>Regole operative</h2>
+            <p class="eyebrow">ACTIVE CONFIGURATION</p>
+            <h2>Trading Rules</h2>
           </div>
         </div>
+
         <dl class="config-list">
-          <div><dt>Regime di mercato</dt><dd id="regime-tf">—</dd></div>
-          <div><dt>Segnale d'ingresso</dt><dd id="signal-tf">—</dd></div>
-          <div><dt>Monitoraggio</dt><dd id="monitor-tf">—</dd></div>
-          <div><dt>Durata massima</dt><dd id="max-holding">—</dd></div>
-          <div><dt>Rischio teorico per trade</dt><dd id="risk-pct">—</dd></div>
-          <div><dt>Controvalore massimo / posizione</dt><dd id="notional-pct">—</dd></div>
-          <div><dt>Capitale iniziale</dt><dd id="initial-cash">—</dd></div>
+          <div>
+            <dt>Market Regime Timeframe</dt>
+            <dd id="regime-tf">—</dd>
+          </div>
+          <div>
+            <dt>Entry Signal Timeframe</dt>
+            <dd id="signal-tf">—</dd>
+          </div>
+          <div>
+            <dt>Monitoring Timeframe</dt>
+            <dd id="monitor-tf">—</dd>
+          </div>
+          <div>
+            <dt>Maximum Holding Period</dt>
+            <dd id="max-holding">—</dd>
+          </div>
+          <div>
+            <dt>Risk Budget per Trade</dt>
+            <dd id="risk-pct">—</dd>
+          </div>
+          <div>
+            <dt>Maximum Position Value</dt>
+            <dd id="notional-pct">—</dd>
+          </div>
+          <div>
+            <dt>Starting Capital</dt>
+            <dd id="initial-cash">—</dd>
+          </div>
         </dl>
       </article>
     </section>
@@ -147,26 +227,41 @@
     <section class="content-panel">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">STORICO</p>
-          <h2>Ultimi trade chiusi</h2>
+          <p class="eyebrow">TRADE HISTORY</p>
+          <h2>Recently Closed Trades</h2>
         </div>
-        <span id="closed-badge" class="count-badge">0 trade</span>
+        <span id="closed-badge" class="count-badge">0 trades</span>
       </div>
+
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Asset</th><th>Chiusura</th><th>Prezzo uscita</th><th>Motivo</th><th>P&amp;L netto</th><th>Rendimento</th><th>Costi</th></tr>
+            <tr>
+              <th>Asset</th>
+              <th>Closed At</th>
+              <th>Exit Price</th>
+              <th>Exit Reason</th>
+              <th>Net P&amp;L</th>
+              <th>Return</th>
+              <th>Trading Costs</th>
+            </tr>
           </thead>
           <tbody id="closed-positions-body">
-            <tr><td colspan="7" class="empty-cell">Nessun trade chiuso.</td></tr>
+            <tr>
+              <td colspan="7" class="empty-cell">
+                No closed trades yet.
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
     </section>
 
     <footer class="footer">
-      <span>Crypto Scout AI · Paper research dashboard</span>
-      <span id="footer-status">I dati vengono pubblicati da GitHub Actions.</span>
+      <span>Crypto Scout AI · Paper Trading Research Dashboard</span>
+      <span id="footer-status">
+        Data is published by GitHub Actions.
+      </span>
     </footer>
   </main>
 </body>
