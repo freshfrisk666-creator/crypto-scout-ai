@@ -13,16 +13,45 @@ import yaml
 
 CONFIG_PATH = Path("config/config.yaml")
 
+BINANCE_PUBLIC_DATA_API = (
+    "https://data-api.binance.vision/api/v3"
+)
 
-def load_config(path: str | Path = CONFIG_PATH) -> dict[str, Any]:
+
+def load_config(
+    path: str | Path = CONFIG_PATH,
+) -> dict[str, Any]:
     """Load project configuration from YAML."""
     with open(path, "r", encoding="utf-8") as file:
         config = yaml.safe_load(file)
 
     if not isinstance(config, dict):
-        raise ValueError(f"Invalid configuration file: {path}")
+        raise ValueError(
+            f"Invalid configuration file: {path}"
+        )
 
     return config
+
+
+def configure_public_market_data_endpoint(exchange):
+    """
+    Configure Binance's documented public market-data endpoint.
+
+    Only the public API base URL is changed.
+    The private API URL remains unchanged.
+    No order endpoints are called by this function.
+    """
+    if getattr(exchange, "id", None) == "binance":
+        api_urls = exchange.urls.get("api")
+
+        if not isinstance(api_urls, dict):
+            raise RuntimeError(
+                "Unexpected CCXT Binance API URL configuration."
+            )
+
+        api_urls["public"] = BINANCE_PUBLIC_DATA_API
+
+    return exchange
 
 
 def is_excluded_asset(
@@ -32,8 +61,13 @@ def is_excluded_asset(
     """Exclude stablecoins, commodities and configured non-crypto products."""
     market_config = config["market"]
 
-    symbol = str(coin.get("symbol") or "").strip().upper()
-    name = str(coin.get("name") or "").strip().lower()
+    symbol = str(
+        coin.get("symbol") or ""
+    ).strip().upper()
+
+    name = str(
+        coin.get("name") or ""
+    ).strip().lower()
 
     exclusion_groups = (
         (
@@ -116,14 +150,21 @@ def fetch_coingecko_page(
 
             if status == 429 or status >= 500:
                 if attempt < retries:
-                    retry_after = response.headers.get("Retry-After")
+                    retry_after = response.headers.get(
+                        "Retry-After"
+                    )
 
                     try:
                         delay = float(retry_after)
                     except (TypeError, ValueError):
-                        delay = min(2 ** (attempt + 1), 20)
+                        delay = min(
+                            2 ** (attempt + 1),
+                            20,
+                        )
 
-                    time.sleep(max(1.0, min(delay, 30.0)))
+                    time.sleep(
+                        max(1.0, min(delay, 30.0))
+                    )
                     continue
 
             response.raise_for_status()
@@ -131,7 +172,8 @@ def fetch_coingecko_page(
 
             if not isinstance(payload, list):
                 raise RuntimeError(
-                    "Unexpected CoinGecko response: expected a list."
+                    "Unexpected CoinGecko response: "
+                    "expected a list."
                 )
 
             return payload
@@ -140,7 +182,9 @@ def fetch_coingecko_page(
             last_error = exc
 
             if attempt < retries:
-                time.sleep(min(2 ** attempt, 10))
+                time.sleep(
+                    min(2 ** attempt, 10)
+                )
                 continue
 
             break
@@ -167,18 +211,40 @@ def get_top_crypto_universe(
     data_config = config["data"]
 
     if target_size is None:
-        target_size = int(market_config["universe_size"])
+        target_size = int(
+            market_config["universe_size"]
+        )
 
     target_size = int(target_size)
-    page_size = int(data_config.get("coingecko_page_size", 250))
-    max_pages = int(data_config.get("coingecko_max_pages", 20))
-    page_delay = float(
-        data_config.get("coingecko_page_delay_seconds", 1.2)
+    page_size = int(
+        data_config.get(
+            "coingecko_page_size",
+            250,
+        )
     )
-    timeout = int(data_config.get("timeout_seconds", 20))
+    max_pages = int(
+        data_config.get(
+            "coingecko_max_pages",
+            20,
+        )
+    )
+    page_delay = float(
+        data_config.get(
+            "coingecko_page_delay_seconds",
+            1.2,
+        )
+    )
+    timeout = int(
+        data_config.get(
+            "timeout_seconds",
+            20,
+        )
+    )
 
     if target_size < 1:
-        raise ValueError("target_size must be positive.")
+        raise ValueError(
+            "target_size must be positive."
+        )
 
     if not 1 <= page_size <= 250:
         raise ValueError(
@@ -186,15 +252,24 @@ def get_top_crypto_universe(
         )
 
     if max_pages < 1:
-        raise ValueError("coingecko_max_pages must be positive.")
+        raise ValueError(
+            "coingecko_max_pages must be positive."
+        )
 
-    if require_target and target_size > page_size * max_pages:
+    if (
+        require_target
+        and target_size > page_size * max_pages
+    ):
         raise ValueError(
             "Requested target exceeds pagination capacity. "
             "Increase coingecko_max_pages."
         )
 
-    api_key = os.getenv("COINGECKO_API_KEY", "").strip()
+    api_key = os.getenv(
+        "COINGECKO_API_KEY",
+        "",
+    ).strip()
+
     headers: dict[str, str] = {}
 
     if api_key:
@@ -208,6 +283,8 @@ def get_top_crypto_universe(
 
     rows_seen = 0
     pages_fetched = 0
+    last_page = 0
+    last_payload_count = 0
 
     for page in range(1, max_pages + 1):
         print(
@@ -215,6 +292,7 @@ def get_top_crypto_universe(
             "richiesta in corso...",
             flush=True,
         )
+
         if page > 1 and page_delay > 0:
             time.sleep(page_delay)
 
@@ -235,16 +313,30 @@ def get_top_crypto_universe(
 
         pages_fetched += 1
         rows_seen += len(payload)
+        last_page = page
+        last_payload_count = len(payload)
 
         if not payload:
             break
 
         for item in payload:
-            coin_id = str(item.get("id") or "").strip()
-            symbol = str(item.get("symbol") or "").strip().upper()
-            name = str(item.get("name") or symbol).strip()
+            coin_id = str(
+                item.get("id") or ""
+            ).strip()
 
-            if not coin_id or not symbol or coin_id in seen_ids:
+            symbol = str(
+                item.get("symbol") or ""
+            ).strip().upper()
+
+            name = str(
+                item.get("name") or symbol
+            ).strip()
+
+            if (
+                not coin_id
+                or not symbol
+                or coin_id in seen_ids
+            ):
                 continue
 
             seen_ids.add(coin_id)
@@ -254,15 +346,26 @@ def get_top_crypto_universe(
                 "name": name,
                 "symbol": symbol,
                 "ticker": symbol,
-                "market_cap_rank": item.get("market_cap_rank"),
-                "market_cap": float(item.get("market_cap") or 0),
-                "current_price": float(item.get("current_price") or 0),
+                "market_cap_rank": item.get(
+                    "market_cap_rank"
+                ),
+                "market_cap": float(
+                    item.get("market_cap") or 0
+                ),
+                "current_price": float(
+                    item.get("current_price") or 0
+                ),
             }
 
-            excluded, reason = is_excluded_asset(coin, config)
+            excluded, reason = is_excluded_asset(
+                coin,
+                config,
+            )
 
             if excluded:
-                excluded_counts[reason or "other"] += 1
+                excluded_counts[
+                    reason or "other"
+                ] += 1
                 continue
 
             coins.append(coin)
@@ -280,17 +383,20 @@ def get_top_crypto_universe(
     print("=" * 65)
     print(f"Pages fetched: {pages_fetched}")
     print(f"Raw market rows scanned: {rows_seen}")
-    print(f"Eligible assets collected: {len(coins)}")
+    print(
+        f"Eligible assets collected: {len(coins)}"
+    )
     print(f"Candidate target: {target_size}")
     print(
-            f"[CoinGecko] Pagina {page}: "
-            f"{len(payload)} righe ricevute; "
-            f"{len(coins)}/{target_size} asset idonei raccolti.",
-            flush=True,
-          )
+        f"[CoinGecko] Pagina {last_page}: "
+        f"{last_payload_count} righe ricevute; "
+        f"{len(coins)}/{target_size} asset idonei raccolti.",
+        flush=True,
+    )
 
     if excluded_counts:
         print("Excluded assets by rule:")
+
         for reason, count in excluded_counts.most_common():
             print(f"  {reason}: {count}")
 
@@ -317,7 +423,10 @@ def filter_binance_spot_pairs(
         for coin in coins
     )
 
-    markets_by_base: dict[str, list[dict[str, Any]]] = {}
+    markets_by_base: dict[
+        str,
+        list[dict[str, Any]],
+    ] = {}
 
     for market in markets.values():
         if not market.get("spot", False):
@@ -326,13 +435,21 @@ def filter_binance_spot_pairs(
         if market.get("active") is False:
             continue
 
-        if str(market.get("quote") or "").upper() != quote:
+        if (
+            str(market.get("quote") or "").upper()
+            != quote
+        ):
             continue
 
-        base = str(market.get("base") or "").upper()
+        base = str(
+            market.get("base") or ""
+        ).upper()
 
         if base:
-            markets_by_base.setdefault(base, []).append(market)
+            markets_by_base.setdefault(
+                base,
+                [],
+            ).append(market)
 
     tradable: list[dict[str, Any]] = []
     ambiguous_symbols: set[str] = set()
@@ -345,14 +462,19 @@ def filter_binance_spot_pairs(
             ambiguous_symbols.add(base)
             continue
 
-        matches = markets_by_base.get(base, [])
+        matches = markets_by_base.get(
+            base,
+            [],
+        )
 
         if not matches:
             continue
 
         market = sorted(
             matches,
-            key=lambda item: str(item.get("symbol") or ""),
+            key=lambda item: str(
+                item.get("symbol") or ""
+            ),
         )[0]
 
         item = dict(coin)
@@ -380,11 +502,16 @@ def get_tradable_crypto_universe(
     selected for research, not the number of exchange markets.
     """
     market_config = config["market"]
-    target_assets = int(market_config["universe_size"])
+    target_assets = int(
+        market_config["universe_size"]
+    )
 
     if exchange is None:
         exchange_name = str(
-            market_config.get("exchange", "binance")
+            market_config.get(
+                "exchange",
+                "binance",
+            )
         ).lower()
 
         if not hasattr(ccxt, exchange_name):
@@ -392,16 +519,28 @@ def get_tradable_crypto_universe(
                 f"Unsupported CCXT exchange: {exchange_name}"
             )
 
-        exchange_class = getattr(ccxt, exchange_name)
+        exchange_class = getattr(
+            ccxt,
+            exchange_name,
+        )
+
         exchange = exchange_class(
             {
                 "enableRateLimit": True,
-                "options": {"defaultType": "spot"},
+                "options": {
+                    "defaultType": "spot",
+                },
             }
         )
 
-    # Select the top 500 eligible assets from CoinGecko,
-    # rather than searching thousands of assets for 500 Binance pairs.
+    # Apply the documented public data endpoint whether this function
+    # created the exchange or received an existing exchange instance.
+    exchange = configure_public_market_data_endpoint(
+        exchange
+    )
+
+    # Select the top eligible assets from CoinGecko rather than
+    # searching thousands of assets for 500 Binance pairs.
     coins = get_top_crypto_universe(
         config,
         target_size=target_assets,
@@ -424,9 +563,15 @@ def get_tradable_crypto_universe(
 
     print("\nCRYPTO UNIVERSE — TOP MARKET CAP")
     print("=" * 65)
-    print(f"Eligible CoinGecko assets selected: {len(coins)}")
-    print(f"Available Binance spot pairs: {len(tradable)}")
-    print(f"Requested market-cap universe: {target_assets}")
+    print(
+        f"Eligible CoinGecko assets selected: {len(coins)}"
+    )
+    print(
+        f"Available Binance spot pairs: {len(tradable)}"
+    )
+    print(
+        f"Requested market-cap universe: {target_assets}"
+    )
 
     if not tradable:
         raise RuntimeError(
@@ -435,20 +580,28 @@ def get_tradable_crypto_universe(
         )
 
     print(
-        f"Research universe available on Binance: "
+        "Research universe available on Binance: "
         f"{len(tradable)} pairs"
     )
 
     return tradable
 
+
 if __name__ == "__main__":
     project_config = load_config()
-    universe = get_tradable_crypto_universe(project_config)
+    universe = get_tradable_crypto_universe(
+        project_config
+    )
 
-    print("\nCRYPTO SCOUT AI — SELECTED TRADABLE UNIVERSE")
+    print(
+        "\nCRYPTO SCOUT AI — SELECTED TRADABLE UNIVERSE"
+    )
     print("=" * 80)
 
-    for rank, coin in enumerate(universe, start=1):
+    for rank, coin in enumerate(
+        universe,
+        start=1,
+    ):
         print(
             f"{rank:3d}. {coin['name']} ({coin['symbol']}) | "
             f"CoinGecko rank: {coin['market_cap_rank']} | "

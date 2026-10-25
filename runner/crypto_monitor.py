@@ -8,7 +8,10 @@ from typing import Any
 import ccxt
 
 from database.db import close_position, open_positions
-from agents.scanner import load_config
+from agents.scanner import (
+    configure_public_market_data_endpoint,
+    load_config,
+)
 
 
 DEFAULT_MONITOR_TIMEFRAME = "5m"
@@ -45,15 +48,22 @@ def create_exchange(config: dict[str, Any]):
             f"Unsupported CCXT exchange: {exchange_name}"
         )
 
-    exchange_class = getattr(ccxt, exchange_name)
+    exchange_class = getattr(
+        ccxt,
+        exchange_name,
+    )
 
-    return exchange_class(
+    exchange = exchange_class(
         {
             "enableRateLimit": True,
             "options": {
                 "defaultType": "spot",
             },
         }
+    )
+
+    return configure_public_market_data_endpoint(
+        exchange
     )
 
 
@@ -65,9 +75,8 @@ def fetch_latest_5m_candle(
     """
     Fetch the most recent OHLCV candle.
 
-    The latest candle may still be forming. That is intentional:
-    its high/low are used to detect whether stop or target has been
-    touched since the last monitoring cycle.
+    The latest candle may still be forming. Its high/low are used
+    to check whether stop or target levels were touched.
     """
     candles = exchange.fetch_ohlcv(
         symbol,
@@ -110,13 +119,18 @@ def evaluate_position(
     Priority:
     1. STOP
     2. TARGET
-    3. 48-hour time limit
+    3. TIME_LIMIT
 
-    If both stop and target are touched inside the same 5m candle,
-    STOP wins because it is the conservative assumption.
+    If stop and target are both touched inside the same 5m candle,
+    STOP wins as a conservative assumption.
     """
-    stop_price = float(position["stop_price"])
-    target_price = float(position["target_price"])
+    stop_price = float(
+        position["stop_price"]
+    )
+
+    target_price = float(
+        position["target_price"]
+    )
 
     entry_time = parse_iso_datetime(
         str(position["entry_time"])
@@ -127,8 +141,13 @@ def evaluate_position(
         + timedelta(hours=max_holding_hours)
     )
 
-    candle_low = float(candle["low"])
-    candle_high = float(candle["high"])
+    candle_low = float(
+        candle["low"]
+    )
+
+    candle_high = float(
+        candle["high"]
+    )
 
     stop_hit = candle_low <= stop_price
     target_hit = candle_high >= target_price
@@ -140,7 +159,10 @@ def evaluate_position(
         return "TARGET", target_price
 
     if now >= holding_deadline:
-        return "TIME_LIMIT", float(candle["close"])
+        return (
+            "TIME_LIMIT",
+            float(candle["close"]),
+        )
 
     return None, None
 
@@ -154,20 +176,28 @@ def monitor_once(
     """
     Perform one monitoring cycle.
 
-    No exchange orders are ever sent.
-    All closures are paper-trading database operations.
+    No exchange orders are sent.
+    Closures are paper-trading database operations only.
     """
     if now is None:
         now = utc_now()
 
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(
+            tzinfo=timezone.utc
+        )
 
     now = now.astimezone(timezone.utc)
 
-    strategy = config.get("strategy", {})
-    market = config.get("market", {})
-    monitor = config.get("monitor", {})
+    strategy = config.get(
+        "strategy",
+        {},
+    )
+
+    market = config.get(
+        "market",
+        {},
+    )
 
     max_holding_hours = float(
         strategy.get(
@@ -225,18 +255,30 @@ def monitor_once(
     closed: list[dict[str, Any]] = []
 
     for position in positions:
-        position_id = int(position["id"])
-        ticker = str(position["ticker"])
-        symbol = str(position["symbol"])
+        position_id = int(
+            position["id"]
+        )
+
+        ticker = str(
+            position["ticker"]
+        )
+
+        symbol = str(
+            position["symbol"]
+        )
 
         print(
             f"\n[{position_id}] "
             f"{ticker} ({symbol})"
         )
+
         print(
-            f"  entry={float(position['entry_price']):.8g} | "
-            f"stop={float(position['stop_price']):.8g} | "
-            f"target={float(position['target_price']):.8g}"
+            f"  entry="
+            f"{float(position['entry_price']):.8g} | "
+            f"stop="
+            f"{float(position['stop_price']):.8g} | "
+            f"target="
+            f"{float(position['target_price']):.8g}"
         )
 
         try:
@@ -282,7 +324,9 @@ def monitor_once(
                 "exit_price": float(exit_price),
             }
 
-            closed.append(closed_item)
+            closed.append(
+                closed_item
+            )
 
             print(
                 f"  CLOSE PAPER — "
@@ -306,7 +350,10 @@ def run_loop(
     config: dict[str, Any],
 ) -> None:
     """Run the local 5-minute monitor continuously."""
-    monitor = config.get("monitor", {})
+    monitor = config.get(
+        "monitor",
+        {},
+    )
 
     interval_minutes = float(
         monitor.get(
@@ -324,7 +371,9 @@ def run_loop(
         interval_minutes * 60.0
     )
 
-    exchange = create_exchange(config)
+    exchange = create_exchange(
+        config
+    )
 
     while True:
         cycle_started = time.monotonic()
@@ -334,11 +383,13 @@ def run_loop(
                 config,
                 exchange=exchange,
             )
+
         except KeyboardInterrupt:
             print(
                 "\nMonitor stopped by user."
             )
             return
+
         except Exception as exc:
             print(
                 f"\nMONITOR ERROR: {exc}"
@@ -360,7 +411,10 @@ def run_loop(
         )
 
         try:
-            time.sleep(sleep_seconds)
+            time.sleep(
+                sleep_seconds
+            )
+
         except KeyboardInterrupt:
             print(
                 "\nMonitor stopped by user."
@@ -384,7 +438,6 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-
     config = load_config()
 
     if args.once:

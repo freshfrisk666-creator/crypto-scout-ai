@@ -1,4 +1,5 @@
 from agents.scanner import (
+    configure_public_market_data_endpoint,
     get_top_crypto_universe,
     is_excluded_asset,
 )
@@ -229,6 +230,7 @@ def test_universe_paginates_until_target_size(monkeypatch):
         "agents.scanner.requests.get",
         fake_get,
     )
+
     monkeypatch.setattr(
         "agents.scanner.time.sleep",
         lambda _: None,
@@ -269,7 +271,9 @@ def test_universe_paginates_until_target_size(monkeypatch):
             ],
         },
         "data": {
-            "coingecko_url": "https://example.test/coins/markets",
+            "coingecko_url": (
+                "https://example.test/coins/markets"
+            ),
             "timeout_seconds": 5,
             "coingecko_page_size": 2,
             "coingecko_max_pages": 3,
@@ -277,12 +281,51 @@ def test_universe_paginates_until_target_size(monkeypatch):
         },
     }
 
-    result = get_top_crypto_universe(config)
+    result = get_top_crypto_universe(
+        config
+    )
 
-    assert [coin["id"] for coin in result] == [
+    assert [
+        coin["id"]
+        for coin in result
+    ] == [
         "bitcoin",
         "ethereum",
         "solana",
     ]
 
     assert requested_pages == [1, 2, 3]
+
+
+def test_binance_public_endpoint_is_overridden_only():
+    class FakeExchange:
+        id = "binance"
+
+        urls = {
+            "api": {
+                "public": (
+                    "https://api.binance.com/api/v3"
+                ),
+                "private": (
+                    "https://api.binance.com/api/v3"
+                ),
+            }
+        }
+
+    exchange = FakeExchange()
+
+    result = configure_public_market_data_endpoint(
+        exchange
+    )
+
+    assert result is exchange
+
+    assert (
+        exchange.urls["api"]["public"]
+        == "https://data-api.binance.vision/api/v3"
+    )
+
+    assert (
+        exchange.urls["api"]["private"]
+        == "https://api.binance.com/api/v3"
+    )
