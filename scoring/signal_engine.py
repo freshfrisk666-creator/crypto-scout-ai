@@ -9,7 +9,7 @@ import pandas as pd
 from agents.technical import add_indicators, clip_score
 
 
-DEFAULT_SCALP_WEIGHTS = {
+DEFAULT_SHORT_TERM_WEIGHTS = {
     "trend": 0.30,
     "setup": 0.25,
     "rsi": 0.15,
@@ -18,10 +18,9 @@ DEFAULT_SCALP_WEIGHTS = {
 }
 
 
-def build_scalp_signal(
+def build_short_term_signal(
     regime_df: pd.DataFrame,
-    setup_df: pd.DataFrame,
-    entry_df: pd.DataFrame,
+    hourly_df: pd.DataFrame,
     *,
     ticker: str,
     symbol: str,
@@ -30,19 +29,17 @@ def build_scalp_signal(
     market_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Evaluate one crypto using three completed-candle timeframes.
+    Evaluate one long-only spot opportunity.
 
-    15m: market regime.
-    5m: setup and ATR-based risk levels.
-    1m: entry trigger.
+    4h candles: market regime.
+    1h candles: setup, entry reference, ATR, and breakout/pullback trigger.
 
-    This function generates a signal only. It does not execute trades.
+    Generates a signal only; never places an exchange order.
     """
     if not ticker or not symbol:
         raise ValueError("Ticker and symbol are required.")
 
     strategy = config.get("strategy", {})
-    market = config.get("market", {})
     scoring = config.get("scoring", {})
 
     atr_period = int(strategy.get("atr_period", 14))
@@ -53,57 +50,50 @@ def build_scalp_signal(
         atr_period=atr_period,
         breakout_lookback=lookback,
     )
-
-    setup = add_indicators(
-        setup_df,
+    hourly = add_indicators(
+        hourly_df,
         atr_period=atr_period,
         breakout_lookback=lookback,
     )
 
-    trigger = add_indicators(
-        entry_df,
-        atr_period=atr_period,
-        breakout_lookback=lookback,
-    )
-
-    # Enough data for EMA50, EMA21, RSI and the entry breakout.
     if len(regime) < 55:
-        raise ValueError("Insufficient 15m candles for regime analysis.")
+        raise ValueError("Insufficient 4h candles for EMA50 regime.")
 
-    if len(setup) < 30:
-        raise ValueError("Insufficient 5m candles for setup analysis.")
-
-    if len(trigger) < lookback + 15:
-        raise ValueError("Insufficient 1m candles for entry analysis.")
+    if len(hourly) < max(30, lookback + 15):
+        raise ValueError("Insufficient 1h candles for signal indicators.")
 
     r = regime.iloc[-1]
-    s = setup.iloc[-1]
-    e = trigger.iloc[-1]
+    s = hourly.iloc[-1]
+    previous = hourly.iloc[-2]
 
-    needed = [
+    for row, fields in (
         (r, ["close", "ema20", "ema50"]),
-        (s, ["close", "ema9", "ema21", "rsi14", "atr14",
-             "volume_ratio"]),
-        (e, ["close", "ema9", "breakout_high"]),
-    ]
-
-    for row, fields in needed:
+        (
+            s,
+            [
+                "close", "ema9", "ema21", "rsi14", "atr14",
+                "volume_ratio", "momentum_6", "momentum_12",
+                "breakout_high", "breakout_strength",
+            ],
+        ),
+        (previous, ["close", "ema9"]),
+    ):
         for field in fields:
             if field not in row or pd.isna(row[field]):
                 raise ValueError(
                     f"Missing indicator {field} for {ticker}."
                 )
 
-    # 15m market regime: bullish structure required for long-only V1.
+    # 4h bullish regime.
     regime_ok = (
         float(r["close"]) > float(r["ema20"])
         and float(r["ema20"]) > float(r["ema50"])
     )
 
-    # 5m setup: short EMA above medium EMA and price above short EMA.
+    # 1h trend setup.
     setup_ok = (
         float(s["ema9"]) > float(s["ema21"])
-        and float(s["close"]) > float(s["ema9"])
+        and float(s["close"]) > float(s["ema21"])
     )
 
     rsi = float(s["rsi14"])
@@ -112,50 +102,62 @@ def build_scalp_signal(
     rsi_ok = rsi_min <= rsi <= rsi_max
 
     volume_ratio = float(s["volume_ratio"])
-    minimum_volume_ratio = float(
-        strategy.get("min_volume_ratio", 1.2)
-    )
+    min_volume_ratio = float(strategy.get("min_volume_ratio", 1.2))
     volume_ok = (
         isfinite(volume_ratio)
-        and volume_ratio >= minimum_volume_ratio
+        and volume_ratio >= min_volume_ratio
     )
 
-    # 1m trigger: a completed candle closes above the previous N-candle high.
-    entry_price = float(e["close"])
-    previous_high = float(e["breakout_high"])
+    entry = float(s["close"])
+    previous_high = float(s["breakout_high"])
 
+    # Entry pattern A: confirmed 1h breakout.
     breakout_ok = (
-        isfinite(entry_price)
+        isfinite(entry)
         and isfinite(previous_high)
-        and entry_price > previous_high
-        and entry_price > float(e["ema9"])
+        and entry > previous_high
+        and entry > float(s["ema9"])
     )
+
+    # Entry pattern B: price reclaims EMA9 after a pullback,
+    # while the EMA9/EMA21 trend remains constructive.
+    pullback_reclaim = (
+        float(previous["close"]) <= float(previous["ema9"])
+        and entry > float(s["ema9"])
+        and entry > float(s["ema21"])
+    )
+
+    trigger_ok = breakout_ok or pullback_reclaim
 
     rejection_reasons: list[str] = []
 
     if not regime_ok:
         rejection_reasons.append("regime_not_bullish")
-
     if not setup_ok:
         rejection_reasons.append("setup_not_bullish")
-
     if not rsi_ok:
         rejection_reasons.append("rsi_out_of_range")
-
     if not volume_ok:
         rejection_reasons.append("relative_volume_too_low")
+    if not trigger_ok:
+        rejection_reasons.append("no_hourly_breakout_or_reclaim")
 
-    if not breakout_ok:
-        rejection_reasons.append("one_minute_breakout_not_confirmed")
+    # Component scores are diagnostic. All entry conditions above
+    # still need to pass for entry_eligible to be True.
+    trend_score = (
+        50.0 * float(float(r["close"]) > float(r["ema20"]))
+        + 50.0 * float(float(r["ema20"]) > float(r["ema50"]))
+    )
 
-    # Component scores are diagnostic, not substitutes for entry conditions.
-    trend_score = 100.0 if regime_ok else 0.0
-    setup_score = 100.0 if setup_ok else 0.0
+    setup_score = (
+        50.0 * float(float(s["ema9"]) > float(s["ema21"]))
+        + 50.0 * float(float(s["close"]) > float(s["ema21"]))
+    )
 
-    if rsi_ok:
+    if 50 <= rsi <= 65:
         rsi_score = 100.0
-    elif 45 <= rsi <= 75:
-        rsi_score = 50.0
+    elif 45 <= rsi <= 70:
+        rsi_score = 70.0
     else:
         rsi_score = 20.0
 
@@ -163,32 +165,43 @@ def build_scalp_signal(
         50.0 + (volume_ratio - 1.0) * 100.0
     )
 
-    breakout_strength = float(e["breakout_strength"])
+    breakout_strength = float(s["breakout_strength"])
     breakout_score = clip_score(
         50.0 + breakout_strength * 1000.0
     )
 
-    weights = dict(
-        scoring.get("scalp_weights", DEFAULT_SCALP_WEIGHTS)
+    mom6 = float(s["momentum_6"])
+    mom12 = float(s["momentum_12"])
+
+    momentum_score = (
+        0.60 * clip_score(50.0 + mom6 * 1000.0)
+        + 0.40 * clip_score(50.0 + mom12 * 500.0)
     )
 
-    if set(weights) != set(DEFAULT_SCALP_WEIGHTS):
+    weights = dict(
+        scoring.get(
+            "short_term_weights",
+            DEFAULT_SHORT_TERM_WEIGHTS,
+        )
+    )
+
+    if set(weights) != set(DEFAULT_SHORT_TERM_WEIGHTS):
         raise ValueError(
-            "scalp_weights must define trend, setup, rsi, volume, breakout."
+            "short_term_weights must define trend, setup, rsi, volume, breakout."
         )
 
     if any(
-        not isfinite(float(weight)) or float(weight) < 0
-        for weight in weights.values()
+        not isfinite(float(value)) or float(value) < 0
+        for value in weights.values()
     ):
-        raise ValueError("Scalp scoring weights must be non-negative.")
+        raise ValueError("Scoring weights must be non-negative.")
 
-    weight_total = sum(float(weight) for weight in weights.values())
-    if weight_total <= 0:
-        raise ValueError("At least one scalp scoring weight must be positive.")
+    total_weight = sum(float(value) for value in weights.values())
+    if total_weight <= 0:
+        raise ValueError("At least one scoring weight must be positive.")
 
     weights = {
-        key: float(value) / weight_total
+        key: float(value) / total_weight
         for key, value in weights.items()
     }
 
@@ -200,31 +213,28 @@ def build_scalp_signal(
         + breakout_score * weights["breakout"]
     )
 
-    # The stop is based on 5m ATR; target multiples are configurable.
     atr = float(s["atr14"])
-    stop_multiple = float(strategy.get("stop_atr_multiple", 1.0))
-    target_multiple = float(strategy.get("target_atr_multiple", 1.5))
+    stop_multiple = float(strategy.get("stop_atr_multiple", 1.5))
+    target_multiple = float(strategy.get("target_atr_multiple", 2.25))
 
     if (
-        not isfinite(entry_price)
-        or entry_price <= 0
+        not isfinite(entry)
+        or entry <= 0
         or not isfinite(atr)
         or atr <= 0
         or stop_multiple <= 0
         or target_multiple <= 0
     ):
-        raise ValueError(f"Invalid entry or risk values for {ticker}.")
+        raise ValueError(f"Invalid entry or ATR risk values for {ticker}.")
 
     stop_distance = atr * stop_multiple
     target_distance = atr * target_multiple
 
-    stop_price = entry_price - stop_distance
-    target_price = entry_price + target_distance
+    stop_price = entry - stop_distance
+    target_price = entry + target_distance
 
     if stop_price <= 0:
-        raise ValueError(
-            f"Calculated stop is not positive for {ticker}."
-        )
+        raise ValueError(f"Calculated stop is not positive for {ticker}.")
 
     risk_reward = target_distance / stop_distance
 
@@ -237,27 +247,28 @@ def build_scalp_signal(
         "ticker": ticker.upper(),
         "symbol": symbol,
         "scan_time": scan_time,
-        "strategy_type": "SCALP",
-        "price": entry_price,
+        "strategy_type": "SHORT_TERM_MOMENTUM",
+        "price": entry,
         "atr": atr,
         "stop_price": stop_price,
         "target_price": target_price,
         "risk_reward": risk_reward,
         "technical_score": round(technical_score, 4),
         "trend_score": round(trend_score, 4),
-        "momentum_score": round(setup_score, 4),
+        "momentum_score": round(momentum_score, 4),
         "rsi_score": round(rsi_score, 4),
         "volume_score": round(volume_score, 4),
         "breakout_score": round(breakout_score, 4),
         "rsi14": rsi,
-        "volume_ratio_5m": volume_ratio,
+        "volume_ratio_1h": volume_ratio,
         "breakout_strength": breakout_strength,
         "regime_ok": regime_ok,
         "setup_ok": setup_ok,
         "rsi_ok": rsi_ok,
         "volume_ok": volume_ok,
         "breakout_ok": breakout_ok,
-        "entry_eligible": len(rejection_reasons) == 0,
+        "pullback_reclaim": pullback_reclaim,
+        "entry_eligible": not rejection_reasons,
         "rejection_reasons": rejection_reasons,
         "quote_volume_24h_usdt": stats.get("quote_volume_24h_usdt"),
         "spread_bps": stats.get("spread_bps"),
@@ -269,7 +280,7 @@ def rank_signals(
     *,
     eligible_only: bool = True,
 ) -> list[dict[str, Any]]:
-    """Rank valid signals; by default, include only entry-eligible signals."""
+    """Rank valid signals. By default, exclude ineligible setups."""
     valid = []
 
     for signal in signals:
@@ -283,7 +294,10 @@ def rank_signals(
             stop = float(signal["stop_price"])
             target = float(signal["target_price"])
 
-            if not all(map(isfinite, (score, rr, price, stop, target))):
+            if not all(
+                isfinite(value)
+                for value in (score, rr, price, stop, target)
+            ):
                 continue
 
             if not 0 <= score <= 100:
@@ -319,7 +333,7 @@ def select_top_signals(
     *,
     eligible_only: bool = True,
 ) -> list[dict[str, Any]]:
-    """Select the highest-ranked valid scalp signals."""
+    """Return up to `limit` ranked signals."""
     if limit < 1:
         raise ValueError("limit must be at least 1.")
 

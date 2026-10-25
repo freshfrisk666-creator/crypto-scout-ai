@@ -1,10 +1,20 @@
+# ============================================================
+# CRYPTO SCOUT AI — SHORT-TERM MOMENTUM V1.1
+# Independent paper-trading project
+# ============================================================
+
 project:
   name: "crypto-scout-ai"
   version: "1.1.0"
   mode: "PAPER"
 
+# -------------------- MARKET UNIVERSE -----------------------
+
 market:
-  universe_size: 200
+  # Number of eligible assets requested from CoinGecko.
+  # Stablecoins and tokenized commodities are excluded first.
+  universe_size: 500
+
   exchange: "binance"
   quote_currency: "USDT"
 
@@ -21,7 +31,6 @@ market:
     - USD1
     - USDG
     - RLUSD
-    - U
     - FRAX
     - GUSD
     - LUSD
@@ -32,6 +41,7 @@ market:
 
   stablecoin_name_keywords:
     - "stablecoin"
+    - "stable coin"
     - "stables"
     - "usd coin"
 
@@ -45,71 +55,142 @@ market:
     - DGX
     - VNXAU
 
-  regime_timeframe: "15m"
-  setup_timeframe: "5m"
-  entry_timeframe: "1m"
+  tokenized_commodity_name_keywords:
+    - "tether gold"
+    - "pax gold"
+    - "tokenized gold"
+    - "tokenized silver"
+    - "gold token"
+    - "silver token"
+# Exclude financial products that are not normal crypto assets.
+  non_crypto_asset_symbols:
+    - BFUSD
+    - CRCLB
+    - SPCXB
+    - SNDKB
+    - MUB
+    - SOXLB
+    - MSTRB
+    - INTCB
+    - NVDAB
 
-  # Legacy keys retained temporarily until the scanner is migrated.
-  signal_timeframe: "5m"
-  monitor_timeframe: "1m"
-  signal_bars: 250
+  non_crypto_name_keywords:
+    - "bstocks"
+    - "tokenized stock"
+    - "tokenized stocks"
+    - "tokenized etf"
+    - "tokenized equity"
+    - "tokenized security"
+    - "tokenized securities"
+
+  # New strategy timeframes.
+  regime_timeframe: "4h"
+  setup_timeframe: "1h"
+  signal_timeframe: "1h"
+  monitor_timeframe: "5m"
+
+  # Temporary compatibility while the existing signal engine
+  # is migrated to the two-timeframe strategy. No 1m strategy.
+  entry_timeframe: "1h"
+
+  signal_bars: 100
   min_avg_dollar_volume: 1000000
 
+  # Preliminary liquidity and spread filters.
   min_quote_volume_24h_usdt: 10000000
   max_spread_bps: 10
 
-strategy:
-  type: "SCALP"
-  atr_period: 14
+  # Maximum coins in the continuous monitoring watchlist.
+  # This does not reduce the 500-asset discovery universe.
+  max_watch_symbols: 50
 
-  stop_atr_multiple: 1.0
-  target_atr_multiple: 1.5
-  max_holding_minutes: 30
-  cooldown_minutes: 15
+# ---------------------- STRATEGY ----------------------------
+
+strategy:
+  type: "SHORT_TERM_MOMENTUM"
+
+  atr_period: 14
+  stop_atr_multiple: 1.5
+  target_atr_multiple: 2.25
+
+  # Maximum holding period: 48 hours.
+  max_holding_hours: 48
+  max_holding_minutes: 2880
+  cooldown_minutes: 60
 
   starting_cash: 10000.0
   max_positions: 3
+
+  # Risk budget and notional limit.
   risk_per_trade_pct: 0.25
   max_position_notional_pct: 0.10
 
-  # Initial entry hypothesis, to be tested.
+  # Initial indicator parameters to validate.
   regime_ema_fast: 20
   regime_ema_slow: 50
   setup_ema_fast: 9
   setup_ema_slow: 21
+
   rsi_min: 50
   rsi_max: 70
   min_volume_ratio: 1.2
   breakout_lookback: 5
 
+# -------------------- SCORING -------------------------------
+
 scoring:
-  scalp_weights:
+  short_term_weights:
     trend: 0.30
     setup: 0.25
     rsi: 0.15
     volume: 0.15
     breakout: 0.15
 
-costs:
-  # Provisional simulation assumptions, not a fee quote.
-  fee_rate_per_side: 0.001
-  slippage_rate_per_side: 0.0005
+# -------------------- PAPER PORTFOLIO -----------------------
 
 portfolio:
   max_positions: 3
+  position_size_fraction: 0.10
   replace_open_positions: false
+
+# ---------------------- COSTS -------------------------------
+
+costs:
+  # Preliminary assumptions for simulation; validate against
+  # the actual trading fee schedule before evaluating results.
+  fee_rate_per_side: 0.001
+  slippage_rate_per_side: 0.0005
+
+# ---------------------- MONITORING --------------------------
 
 monitor:
   mode: "websocket"
+  interval_minutes: 5
   reconnect_max_delay_seconds: 30
   close_on_time_limit: true
   check_stop: true
   check_target: true
 
+# ---------------------- DATA SOURCES ------------------------
+
 data:
   coingecko_url: "https://api.coingecko.com/api/v3/coins/markets"
   timeout_seconds: 20
+
+  # CoinGecko allows a maximum of 250 assets per request.
+  coingecko_page_size: 250
+  coingecko_max_pages: 10
+  coingecko_page_delay_seconds: 1.0
+
+  # OHLCV history requested from Binance.
   ohlcv_limit: 250
+
+  coingecko_page_size: 250
+  coingecko_max_pages: 20
+  coingecko_candidate_size: 500
+  coingecko_page_delay_seconds: 2.5
+
+# ---------------------- SAFETY ------------------------------
 
 safety:
   paper_trading_only: true

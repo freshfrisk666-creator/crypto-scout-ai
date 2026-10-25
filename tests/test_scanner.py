@@ -5,6 +5,7 @@ from agents.scanner import (
 
 
 def make_config():
+    """Return a test configuration for asset-exclusion rules."""
     return {
         "market": {
             "stablecoin_exclusions": [
@@ -32,6 +33,21 @@ def make_config():
                 "tokenized silver",
                 "gold token",
                 "silver token",
+            ],
+            "non_crypto_asset_symbols": [
+                "BFUSD",
+                "CRCLB",
+                "SPCXB",
+                "NVDAB",
+            ],
+            "non_crypto_name_keywords": [
+                "bstocks",
+                "tokenized stock",
+                "tokenized stocks",
+                "tokenized etf",
+                "tokenized equity",
+                "tokenized security",
+                "tokenized securities",
             ],
         }
     }
@@ -97,7 +113,41 @@ def test_normal_crypto_asset_is_allowed():
     assert reason is None
 
 
+def test_bstocks_tokenized_stock_is_excluded():
+    config = make_config()
+
+    excluded, reason = is_excluded_asset(
+        {
+            "symbol": "SPCXB",
+            "name": "SpaceX (bStocks Tokenized Stock)",
+        },
+        config,
+    )
+
+    assert excluded is True
+    assert reason == "non_crypto_symbol"
+
+
+def test_bfusd_is_excluded_from_directional_universe():
+    config = make_config()
+
+    excluded, reason = is_excluded_asset(
+        {
+            "symbol": "BFUSD",
+            "name": "BFUSD",
+        },
+        config,
+    )
+
+    assert excluded is True
+    assert reason == "non_crypto_symbol"
+
+
 def test_universe_paginates_until_target_size(monkeypatch):
+    """
+    Verify that the scanner continues to subsequent pages when
+    exclusions prevent the target universe size from being reached.
+    """
     pages = {
         1: [
             {
@@ -202,6 +252,21 @@ def test_universe_paginates_until_target_size(monkeypatch):
                 "tether gold",
                 "pax gold",
             ],
+            "non_crypto_asset_symbols": [
+                "BFUSD",
+                "CRCLB",
+                "SPCXB",
+                "NVDAB",
+            ],
+            "non_crypto_name_keywords": [
+                "bstocks",
+                "tokenized stock",
+                "tokenized stocks",
+                "tokenized etf",
+                "tokenized equity",
+                "tokenized security",
+                "tokenized securities",
+            ],
         },
         "data": {
             "coingecko_url": "https://example.test/coins/markets",
@@ -219,4 +284,5 @@ def test_universe_paginates_until_target_size(monkeypatch):
         "ethereum",
         "solana",
     ]
+
     assert requested_pages == [1, 2, 3]

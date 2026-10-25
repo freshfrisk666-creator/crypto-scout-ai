@@ -15,10 +15,9 @@ def add_indicators(
     breakout_lookback: int = 5,
 ) -> pd.DataFrame:
     """
-    Calculate indicators for the Crypto Scout AI scalp strategy.
+    Calculate indicators for the short-term momentum strategy.
 
-    Expected input: completed OHLCV candles.
-    Timeframe is selected by the caller (15m, 5m or 1m).
+    The caller supplies completed 4h or 1h OHLCV candles.
     """
     required = {"open", "high", "low", "close", "volume"}
     missing = required.difference(df.columns)
@@ -44,7 +43,7 @@ def add_indicators(
     if (out["volume"].dropna() < 0).any():
         raise ValueError("Volume cannot be negative.")
 
-    # Moving averages for the market regime and scalp setup.
+    # EMA values used for the 4h regime and 1h setup.
     for span in (9, 20, 21, 50):
         out[f"ema{span}"] = out["close"].ewm(
             span=span,
@@ -52,44 +51,39 @@ def add_indicators(
             min_periods=span,
         ).mean()
 
-    # RSI 14 with Wilder-style exponential smoothing.
+    # RSI 14 using Wilder-style exponential smoothing.
     delta = out["close"].diff()
-    gain = delta.clip(lower=0.0)
-    loss = -delta.clip(upper=0.0)
+    gains = delta.clip(lower=0.0)
+    losses = -delta.clip(upper=0.0)
 
-    avg_gain = gain.ewm(
+    avg_gain = gains.ewm(
         alpha=1 / 14,
         min_periods=14,
         adjust=False,
     ).mean()
 
-    avg_loss = loss.ewm(
+    avg_loss = losses.ewm(
         alpha=1 / 14,
         min_periods=14,
         adjust=False,
     ).mean()
 
-    relative_strength = avg_gain / avg_loss.replace(0, np.nan)
-    out["rsi14"] = 100.0 - (
-        100.0 / (1.0 + relative_strength)
-    )
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    out["rsi14"] = 100.0 - (100.0 / (1.0 + rs))
 
     out.loc[
-        (avg_loss == 0) & (avg_gain > 0),
-        "rsi14",
+        (avg_loss == 0) & (avg_gain > 0), "rsi14"
     ] = 100.0
 
     out.loc[
-        (avg_gain == 0) & (avg_loss > 0),
-        "rsi14",
+        (avg_gain == 0) & (avg_loss > 0), "rsi14"
     ] = 0.0
 
     out.loc[
-        (avg_gain == 0) & (avg_loss == 0),
-        "rsi14",
+        (avg_gain == 0) & (avg_loss == 0), "rsi14"
     ] = 50.0
 
-    # True Range and ATR.
+    # Average True Range.
     previous_close = out["close"].shift(1)
 
     true_range = pd.concat(
@@ -107,15 +101,18 @@ def add_indicators(
         adjust=False,
     ).mean()
 
-    # Relative volume.
+    # Relative volume of the current completed candle.
     out["volume_avg20"] = out["volume"].rolling(20).mean()
-
     out["volume_ratio"] = (
         out["volume"]
         / out["volume_avg20"].replace(0, np.nan)
     )
 
-    # Highest high of the previous N candles, excluding current candle.
+    # Short-term momentum across 6 and 12 candles.
+    out["momentum_6"] = out["close"].pct_change(6)
+    out["momentum_12"] = out["close"].pct_change(12)
+
+    # Previous N-candle high, excluding the current candle.
     out["breakout_high"] = (
         out["high"]
         .rolling(breakout_lookback)
