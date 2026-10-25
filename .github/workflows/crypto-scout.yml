@@ -1,13 +1,13 @@
-
 name: Crypto Scout AI - Paper Engine and Dashboard
 
 on:
   workflow_dispatch:
-
-  schedule:
-    # Run every 5 minutes, using explicit UTC minute values.
-    # GitHub Actions scheduling is best-effort.
-    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
+    inputs:
+      scheduled_tick:
+        description: "True only for the external scheduler"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -51,6 +51,8 @@ jobs:
 
       - name: Monitor positions, scan if due, and generate dashboard data
         id: cycle
+        env:
+          SCHEDULED_TICK: ${{ inputs.scheduled_tick }}
         run: python -m scripts.run_actions_cycle
 
       - name: Persist paper-trading state
